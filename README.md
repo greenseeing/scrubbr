@@ -89,9 +89,15 @@ question, pass `-y`.
 |---|---|
 | `-o FILE`, `--output FILE` | save the cleaned text to `FILE` instead of printing it |
 | `-y`, `--no-review` | skip the interactive review |
+| `-v`, `--verbose` | list every replaced value: what it was, how often it occurred, what it became |
 | `--strict` | refuse to emit anything while suspicious strings remain unscrubbed |
 | `--also TEXT` | also scrub this exact string; repeat the flag for several |
 | `--no-identity` | don't seed the scanner with this machine's hostname, user and machine-id |
+
+The report normally shows only counts per category. With `-v` it also prints one line per
+distinct value — `text=aa:bb:cc:dd:ee:ff count=3 alias=ea:82:db:a4:68:68` — so you can see
+exactly what maps to what. Be aware this prints the original sensitive values to your
+screen (stderr), so don't share that part.
 
 `--also` is for names only you know are sensitive — an internal server name, a project
 codename:

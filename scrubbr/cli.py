@@ -1,6 +1,7 @@
 import argparse
 import io
 import sys
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -51,6 +52,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         help="skip the interactive review",
     )
     parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="also report each replaced value with its count and alias"
+        " (prints the original values to stderr)",
+    )
+    parser.add_argument(
         "--strict",
         action="store_true",
         help="refuse to emit anything while unscrubbed suspicious strings remain",
@@ -70,14 +78,24 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _report(log: structlog.stdlib.BoundLogger, result: ScrubResult) -> None:
+def _report(log: structlog.stdlib.BoundLogger, result: ScrubResult, verbose: bool) -> None:
     log.info(
         "scrubbed",
         **{kind.value: count for kind, count in sorted(result.counts.items())},
         replacements=len(result.findings),
     )
+    if verbose:
+        occurrences = Counter((f.kind, f.text, f.alias) for f in result.findings)
+        for (kind, text, alias), count in sorted(occurrences.items()):
+            log.info("replaced", kind=kind.value, text=_clip(text), count=count, alias=_clip(alias))
     for residual in result.residuals:
         log.warning("unscrubbed", line=residual.line, reason=residual.reason, text=residual.text)
+
+
+def _clip(value: str) -> str:
+    # A PEM body is kilobytes across many lines; the report names values, it does not
+    # reproduce them.
+    return " ".join(value.split())[:60]
 
 
 def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_terminal) -> int:
@@ -93,7 +111,7 @@ def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_
     base = LocalIdentity() if args.no_identity else LocalIdentity.local()
     identity = replace(base, extra=base.extra + tuple(args.also))
     result = scrub(text, identity)
-    _report(log, result)
+    _report(log, result, args.verbose)
 
     if args.strict and result.residuals:
         log.error("refusing to emit", reason="strict mode with unscrubbed strings")

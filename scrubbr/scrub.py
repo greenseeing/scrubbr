@@ -80,7 +80,9 @@ def _sweep(
         replacement = _replacement(kind, match.text, book)
         if replacement is None:
             continue
-        findings.append(Finding(kind=kind, start=match.start, end=match.end, text=match.text))
+        findings.append(
+            Finding(kind=kind, start=match.start, end=match.end, text=match.text, alias=replacement)
+        )
         replacements.append((match.start, match.end, replacement))
     return findings, replacements, unresolved
 

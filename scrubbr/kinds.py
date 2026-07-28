@@ -29,6 +29,7 @@ class Finding(BaseModel):
     start: int
     end: int
     text: str
+    alias: str
 
 
 class Residual(BaseModel):

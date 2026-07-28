@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Never
 
@@ -50,6 +51,29 @@ def test_scrubbed_text_goes_to_stdout_and_the_report_to_stderr(
     assert "aa:bb:cc:dd:ee:ff" not in captured.out
     assert captured.out.endswith("\n")
     assert "mac" in captured.err
+
+
+def test_verbose_reports_the_original_text_count_and_alias_for_a_repeated_value(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "log.txt"
+    path.write_text("hw aa:bb:cc:dd:ee:ff and again aa:bb:cc:dd:ee:ff\n", encoding="utf-8")
+    assert main([str(path), "-v", "-y", "--no-identity"]) == 0
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    replaced = [event for event in events if event["event"] == "replaced"]
+    assert len(replaced) == 1
+    assert replaced[0]["kind"] == "mac"
+    assert replaced[0]["text"] == "aa:bb:cc:dd:ee:ff"
+    assert replaced[0]["count"] == 2
+    assert replaced[0]["alias"] != "aa:bb:cc:dd:ee:ff"
+
+
+def test_without_verbose_no_replaced_event_is_reported(
+    sample_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([str(sample_file), "-y", "--no-identity"]) == 0
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert not [event for event in events if event["event"] == "replaced"]
 
 
 def test_strict_refuses_to_emit_when_something_suspicious_remains(

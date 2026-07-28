@@ -89,6 +89,13 @@ class TestConsistency:
         assert re.search(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", scrubbed("aa:bb:cc:dd:ee:ff"))
         assert re.search(r"[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}", scrubbed("aabb.ccdd.eeff"))
 
+    def test_repeated_value_findings_share_one_alias_and_it_is_not_the_original(self) -> None:
+        result = scrub("a aa:bb:cc:dd:ee:ff b aa:bb:cc:dd:ee:ff")
+        mac_findings = [f for f in result.findings if f.kind == Kind.MAC]
+        assert len(mac_findings) == 2
+        assert mac_findings[0].alias == mac_findings[1].alias
+        assert mac_findings[0].alias != "aa:bb:cc:dd:ee:ff"
+
 
 class TestColonHexCollisions:
     def test_compressed_ipv6_tail_is_not_mistaken_for_a_mac(self) -> None:
