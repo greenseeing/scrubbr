@@ -139,3 +139,47 @@ def test_the_review_stays_quiet_when_there_is_nothing_to_warn_about() -> None:
     terminal = FakeTerminal("\n")
     confirm(text, result.text, result.residuals, terminal)
     assert "look sensitive" not in terminal.shown
+
+
+def test_the_output_option_writes_the_scrubbed_text_to_a_file_and_leaves_stdout_empty(
+    sample_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out_path = tmp_path / "out.txt"
+    assert main([str(sample_file), "-y", "--no-identity", "-o", str(out_path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    written = out_path.read_text(encoding="utf-8")
+    assert "aa:bb:cc:dd:ee:ff" not in written
+    assert "written" in captured.err
+
+
+def test_declining_at_review_with_the_output_option_leaves_no_file_behind(
+    sample_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out_path = tmp_path / "out.txt"
+    exit_code = main(
+        [str(sample_file), "--no-identity", "-o", str(out_path)],
+        open_tty=lambda: FakeTerminal("n\n"),
+    )
+    assert exit_code == 1
+    assert capsys.readouterr().out == ""
+    assert not out_path.exists()
+
+
+def test_strict_refusal_with_the_output_option_leaves_no_file_behind(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "log.txt"
+    path.write_text("tok ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6\n", encoding="utf-8")
+    out_path = tmp_path / "out.txt"
+    assert main([str(path), "-y", "--strict", "--no-identity", "-o", str(out_path)]) == 2
+    assert capsys.readouterr().out == ""
+    assert not out_path.exists()
+
+
+def test_an_unwritable_output_path_returns_four_and_emits_nothing(
+    sample_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out_path = tmp_path / "missing" / "out.txt"
+    assert main([str(sample_file), "-y", "--no-identity", "-o", str(out_path)]) == 4
+    assert capsys.readouterr().out == ""

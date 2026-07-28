@@ -2,13 +2,103 @@
 
 Sanitize Linux diagnostics before pasting them into an LLM chat.
 
+When you ask an AI assistant for help with a system problem, you usually paste in logs —
+and logs are full of things that identify you: your username, your hostname, your Wi-Fi
+network name, hardware addresses, sometimes even keys and passwords. scrubbr replaces all
+of that with harmless random look-alikes, shows you exactly what it changed, and only then
+hands the text over.
+
+The same value always gets the same replacement, so the log still makes sense: if your
+laptop appears forty times, it becomes `host-a` all forty times, and the assistant can
+still follow what happened.
+
+## Install
+
+You need Python 3.13 or newer. Then, with either [uv](https://docs.astral.sh/uv/) or
+[pipx](https://pipx.pypa.io/):
+
+```
+uv tool install git+https://github.com/greenseeing/scrubbr
+```
+
+```
+pipx install git+https://github.com/greenseeing/scrubbr
+```
+
+After that, the `scrubbr` command is available in your terminal.
+
+## How to use it
+
+### Clean up a log file
+
+Say a program wrote a log you want to share. Point scrubbr at the file and tell it where
+to save the cleaned copy with `-o`:
+
+```
+scrubbr boot-log.txt -o boot-log.clean.txt
+```
+
+scrubbr shows you a review of every change it wants to make (see below). Once you approve,
+the safe copy lands in `boot-log.clean.txt`, ready to attach or paste. Your original file
+is never modified.
+
+### Clean up a command's output
+
+You can also feed scrubbr the output of another command directly, using a pipe (`|`):
+
+```
+dmesg | scrubbr -o dmesg.clean.txt
+journalctl -u NetworkManager -n 200 | scrubbr -o nm.clean.txt
+```
+
+The pipe sends whatever the first command prints straight into scrubbr, so nothing
+sensitive ever touches your disk unscrubbed.
+
+### Straight to the clipboard
+
+If you'd rather skip the file entirely, pipe scrubbr's output into your clipboard tool and
+paste it into the chat:
+
 ```
 journalctl -u NetworkManager -n 200 | scrubbr | wl-copy
 ```
 
-Reads text, replaces everything that identifies you with random look-alikes of the same
-shape, writes the clean text to stdout and a report to stderr. The same value always gets
-the same replacement, so the log still correlates and stays diagnosable.
+(`wl-copy` is for Wayland desktops; on X11 use `xclip -selection clipboard`.)
+
+Without `-o`, scrubbr prints the cleaned text to standard output — the terminal, or
+whatever you pipe it into. The report of what was changed always goes to the screen
+separately (stderr), so it never mixes into the cleaned text.
+
+### The review step
+
+Before emitting anything, scrubbr shows a diff on your terminal: every line it changed,
+original next to replacement, plus a warning list of anything that *looks* sensitive but
+that it didn't recognise well enough to rewrite. It then asks:
+
+```
+emit scrubbed text? [y/N]
+```
+
+Type `y` to approve. Anything else (including just pressing Enter) discards the output —
+nothing is printed and no file is written. If you trust a run and want to skip the
+question, pass `-y`.
+
+### Options
+
+| Option | What it does |
+|---|---|
+| `-o FILE`, `--output FILE` | save the cleaned text to `FILE` instead of printing it |
+| `-y`, `--no-review` | skip the interactive review |
+| `--strict` | refuse to emit anything while suspicious strings remain unscrubbed |
+| `--also TEXT` | also scrub this exact string; repeat the flag for several |
+| `--no-identity` | don't seed the scanner with this machine's hostname, user and machine-id |
+
+`--also` is for names only you know are sensitive — an internal server name, a project
+codename:
+
+```
+scrubbr app.log -o app.clean.txt --also prod-db-07 --also project-nimbus
+```
 
 ## What it replaces
 
@@ -61,21 +151,9 @@ Also worth knowing: don't use `journalctl -x` for output you intend to share. Th
 explanatory text it adds widens what gets exposed, and no scrubber can help with data you
 chose to include.
 
-## Install
+## Exit codes
 
-```
-uv tool install git+https://github.com/greenseeing/scrubbr
-```
-
-or `pipx install git+https://github.com/greenseeing/scrubbr`. Python 3.13+.
-
-## Usage
-
-```
-scrubbr [file] [-y] [--strict] [--no-identity] [--also TEXT]
-```
-
-Reads stdin when no file is given.
+For scripts and the curious:
 
 | Exit | Meaning |
 |---|---|
@@ -83,6 +161,8 @@ Reads stdin when no file is given.
 | 1 | you declined at the review |
 | 2 | refused under `--strict` because suspicious strings remained |
 | 3 | refused because there was no terminal to review on — pass `-y` to skip review |
+| 4 | the output file given with `-o` could not be written |
 
 Exit 3 exists because the alternative is worse: emitting unreviewed text exactly when the
 safety gate could not run. Skipping the review should be your decision, not a fallback.
+On any refusal, `-o` writes nothing — the output file is only created after you approve.

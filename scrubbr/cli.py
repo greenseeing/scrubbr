@@ -3,6 +3,7 @@ import io
 import sys
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 import structlog
 
@@ -36,6 +37,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         type=lambda path: argparse.FileType("r", encoding="utf-8", errors="replace")(path),
         default=None,
         help="file to read; defaults to stdin",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        help="write the scrubbed text to FILE instead of stdout",
     )
     parser.add_argument(
         "-y",
@@ -73,9 +80,7 @@ def _report(log: structlog.stdlib.BoundLogger, result: ScrubResult) -> None:
         log.warning("unscrubbed", line=residual.line, reason=residual.reason, text=residual.text)
 
 
-def main(
-    argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_terminal
-) -> int:
+def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_terminal) -> int:
     args = _parse(argv)
     _configure_logging()
     log = structlog.get_logger()
@@ -110,7 +115,17 @@ def main(
             log.error("discarded", reason="not confirmed at review")
             return 1
 
-    sys.stdout.write(result.text)
+    if args.output is not None:
+        try:
+            # Opened only after the review passes: opening at parse time would leave an
+            # empty or truncated file behind on every refused run.
+            Path(args.output).write_text(result.text, encoding="utf-8")
+        except OSError as error:
+            log.error("could not write", path=args.output, error=str(error))
+            return 4
+        log.info("written", path=args.output)
+    else:
+        sys.stdout.write(result.text)
     return 0
 
 
