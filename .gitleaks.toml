@@ -1,0 +1,11 @@
+# scrubbr's tests exercise a secret scrubber, so the fixtures are secret-shaped
+# by design (a keyboard-pattern ghp_ token, truncated public example PEM blocks).
+# Allowlisting tests/ means a real secret pasted into a test would go unflagged:
+# keep every fixture synthetic.
+title = "scrubbr"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = ['''^tests/''']
