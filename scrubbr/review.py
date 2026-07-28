@@ -1,4 +1,5 @@
 import difflib
+import sys
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -21,11 +22,33 @@ class Terminal(Protocol):
     def close(self) -> None: ...
 
 
+class _StdioTerminal:
+    """Review terminal for shells that are interactive but expose no /dev/tty device."""
+
+    def write(self, text: str) -> int:
+        return sys.stderr.write(text)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+    def readline(self) -> str:
+        return sys.stdin.readline()
+
+    def close(self) -> None:
+        return None
+
+
 def open_terminal() -> Terminal:
     """The interactive review's terminal: /dev/tty, so stdio stays free for the pipe."""
     try:
         return open("/dev/tty", "r+", encoding="utf-8")
     except OSError as error:
+        # Sandboxed and non-Unix terminals can lack the device while stdin and stderr
+        # are still real terminals. A human is present, so the review can run on stdio;
+        # stdout stays untouched for the scrubbed text. Piped runs have a non-tty stdin
+        # and still refuse.
+        if sys.stdin.isatty() and sys.stderr.isatty():
+            return _StdioTerminal()
         raise NoTerminal from error
 
 

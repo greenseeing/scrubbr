@@ -1,6 +1,8 @@
+import builtins
 import json
+import sys
 from pathlib import Path
-from typing import Never
+from typing import Any, Never
 
 import pytest
 
@@ -41,6 +43,29 @@ def sample_file(tmp_path: Path) -> Path:
     path = tmp_path / "log.txt"
     path.write_text(SAMPLE, encoding="utf-8")
     return path
+
+
+class FakeStdin:
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+
+    def isatty(self) -> bool:
+        return True
+
+    def readline(self) -> str:
+        return self._answer
+
+
+@pytest.fixture
+def no_dev_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_open = builtins.open
+
+    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if file == "/dev/tty":
+            raise OSError("no such device")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", fake_open)
 
 
 def test_scrubbed_text_goes_to_stdout_and_the_report_to_stderr(
@@ -206,4 +231,42 @@ def test_an_unwritable_output_path_returns_four_and_emits_nothing(
 ) -> None:
     out_path = tmp_path / "missing" / "out.txt"
     assert main([str(sample_file), "-y", "--no-identity", "-o", str(out_path)]) == 4
+    assert capsys.readouterr().out == ""
+
+
+def test_without_dev_tty_but_with_an_interactive_shell_the_review_runs_on_stdio(
+    no_dev_tty: None,
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "stdin", FakeStdin("y\n"))
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    assert main([str(sample_file), "--no-identity"]) == 0
+    captured = capsys.readouterr()
+    assert "-host box hw" in captured.err
+    assert "emit scrubbed text?" in captured.err
+    assert captured.out and "aa:bb:cc:dd:ee:ff" not in captured.out
+
+
+def test_without_dev_tty_but_with_an_interactive_shell_declining_emits_nothing(
+    no_dev_tty: None,
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "stdin", FakeStdin("n\n"))
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    assert main([str(sample_file), "--no-identity"]) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(
+    no_dev_tty: None,
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert main([str(sample_file), "--no-identity"]) == 3
     assert capsys.readouterr().out == ""

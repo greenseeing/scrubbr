@@ -140,7 +140,7 @@ Regex scrubbing has false negatives, and the failure mode is silent. Two mitigat
   number: high entropy, a known credential prefix like `ghp_` or `AKIA`, or colon-hex that
   is recognisably structured but is neither a MAC, a fingerprint nor a valid address. The
   tool tells you where it is unsure rather than implying it caught everything.
-- Every run shows an interactive diff on `/dev/tty` before emitting. Skip it with `-y`.
+- Every run shows an interactive diff on your terminal before emitting. Skip it with `-y`.
 
 `--strict` refuses to emit at all while anything suspicious remains unscrubbed.
 
@@ -169,6 +169,9 @@ For scripts and the curious:
 | 3 | refused because there was no terminal to review on — pass `-y` to skip review |
 | 4 | the output file given with `-o` could not be written |
 
-Exit 3 exists because the alternative is worse: emitting unreviewed text exactly when the
+For the review, scrubbr opens the controlling terminal (`/dev/tty`) so pipes stay free;
+where that device doesn't exist it falls back to your terminal's own input and output, as
+long as both are genuinely interactive. Exit 3 only happens when neither is available —
+and it exists because the alternative is worse: emitting unreviewed text exactly when the
 safety gate could not run. Skipping the review should be your decision, not a fallback.
 On any refusal, `-o` writes nothing — the output file is only created after you approve.
