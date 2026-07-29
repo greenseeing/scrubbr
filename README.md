@@ -67,7 +67,9 @@ journalctl -u NetworkManager -n 200 | scrubbr | wl-copy
 
 Without `-o`, scrubbr prints the cleaned text to standard output — the terminal, or
 whatever you pipe it into. The report of what was changed always goes to the screen
-separately (stderr), so it never mixes into the cleaned text.
+separately (stderr), so it never mixes into the cleaned text. If you redirect stderr too
+(so it isn't a terminal), the report switches to JSON lines — one event per line — so
+scripts can parse it.
 
 ### The review step
 
@@ -94,9 +96,17 @@ question, pass `-y`.
 | `--also TEXT` | also scrub this exact string; repeat the flag for several |
 | `--no-identity` | don't seed the scanner with this machine's hostname, user and machine-id |
 
-The report normally shows only counts per category. With `-v` it also prints one line per
-distinct value — `text=aa:bb:cc:dd:ee:ff count=3 alias=ea:82:db:a4:68:68` — so you can see
-exactly what maps to what. Be aware this prints the original sensitive values to your
+The report normally shows only counts per category. With `-v` it also prints a table with
+one row per distinct value, so you can see exactly what maps to what:
+
+```
+kind   count  text                alias
+mac        3  aa:bb:cc:dd:ee:ff   ea:82:db:a4:68:68
+email      1  alice@corp.example  person-a@example.invalid
+```
+
+The table is sized to your window; values too long for their column are shortened in the
+middle (`9f2a1c7b…4c6b`). Be aware this prints the original sensitive values to your
 screen (stderr), so don't share that part.
 
 `--also` is for names only you know are sensitive — an internal server name, a project

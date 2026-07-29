@@ -6,7 +6,7 @@ from typing import Any, Never
 
 import pytest
 
-from scrubbr.cli import main
+from scrubbr.cli import _stderr_width, main
 from scrubbr.review import NoTerminal, confirm
 from scrubbr.scrub import scrub
 
@@ -91,6 +91,29 @@ def test_verbose_reports_the_original_text_count_and_alias_for_a_repeated_value(
     assert replaced[0]["text"] == "aa:bb:cc:dd:ee:ff"
     assert replaced[0]["count"] == 2
     assert replaced[0]["alias"] != "aa:bb:cc:dd:ee:ff"
+
+
+def test_on_a_terminal_the_report_is_a_table_not_json_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "log.txt"
+    path.write_text("hw aa:bb:cc:dd:ee:ff and again aa:bb:cc:dd:ee:ff\n", encoding="utf-8")
+    monkeypatch.setenv("COLUMNS", "100")
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    assert main([str(path), "-v", "-y", "--no-identity"]) == 0
+    err = capsys.readouterr().err
+    assert "scrubbed 1 distinct values, 2 replacements" in err
+    assert "kind" in err and "count" in err
+    assert "aa:bb:cc:dd:ee:ff" in err
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(err.splitlines()[0])
+
+
+def test_the_stderr_width_falls_back_when_stderr_is_not_a_real_terminal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("COLUMNS", raising=False)
+    assert _stderr_width() == 80
 
 
 def test_without_verbose_no_replaced_event_is_reported(

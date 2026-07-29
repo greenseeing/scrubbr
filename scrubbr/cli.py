@@ -1,5 +1,7 @@
 import argparse
 import io
+import os
+import shutil
 import sys
 from collections import Counter
 from collections.abc import Callable
@@ -9,6 +11,7 @@ from pathlib import Path
 import structlog
 
 from scrubbr.identity import LocalIdentity
+from scrubbr.report import clip, render_report
 from scrubbr.review import NoTerminal, Terminal, confirm, open_terminal
 from scrubbr.scrub import ScrubResult, scrub
 
@@ -79,6 +82,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _report(log: structlog.stdlib.BoundLogger, result: ScrubResult, verbose: bool) -> None:
+    if sys.stderr.isatty():
+        sys.stderr.write("\n".join(render_report(result, verbose, _stderr_width())) + "\n")
+        return
     log.info(
         "scrubbed",
         **{kind.value: count for kind, count in sorted(result.counts.items())},
@@ -87,15 +93,18 @@ def _report(log: structlog.stdlib.BoundLogger, result: ScrubResult, verbose: boo
     if verbose:
         occurrences = Counter((f.kind, f.text, f.alias) for f in result.findings)
         for (kind, text, alias), count in sorted(occurrences.items()):
-            log.info("replaced", kind=kind.value, text=_clip(text), count=count, alias=_clip(alias))
+            log.info("replaced", kind=kind.value, text=clip(text), count=count, alias=clip(alias))
     for residual in result.residuals:
         log.warning("unscrubbed", line=residual.line, reason=residual.reason, text=residual.text)
 
 
-def _clip(value: str) -> str:
-    # A PEM body is kilobytes across many lines; the report names values, it does not
-    # reproduce them.
-    return " ".join(value.split())[:60]
+def _stderr_width() -> int:
+    try:
+        return os.get_terminal_size(sys.stderr.fileno()).columns
+    except (OSError, ValueError):
+        # shutil probes stdout, which is routinely a pipe here (`scrubbr | wl-copy`), so
+        # stderr's own fd is tried first; shutil still honours $COLUMNS before its 80.
+        return shutil.get_terminal_size().columns
 
 
 def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_terminal) -> int:
