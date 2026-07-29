@@ -141,7 +141,33 @@ def test_also_scrubs_a_literal_the_tool_could_not_have_guessed(
     assert main([str(path), "-y", "--no-identity", "--also", "prod-db-07"]) == 0
     out = capsys.readouterr().out
     assert "prod-db-07" not in out
-    assert "host-a" in out
+    assert "[REDACTED]" in out
+
+
+def test_also_with_a_private_ip_scrubs_it_while_other_private_ips_survive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "log.txt"
+    path.write_text("peers 10.0.0.5 and 10.0.0.6\n", encoding="utf-8")
+    assert main([str(path), "-y", "--no-identity", "--also", "10.0.0.5"]) == 0
+    out = capsys.readouterr().out
+    assert "10.0.0.5" not in out
+    assert "10.0.0.6" in out
+
+
+def test_verbose_reports_the_redacted_kind_for_an_also_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "log.txt"
+    path.write_text("connecting to prod-db-07 now\n", encoding="utf-8")
+    assert main([str(path), "-v", "-y", "--no-identity", "--also", "prod-db-07"]) == 0
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    counted = next(event for event in events if event["event"] == "scrubbed")
+    assert counted["redacted"] == 1
+    replaced = [event for event in events if event["event"] == "replaced"]
+    assert len(replaced) == 1
+    assert replaced[0]["kind"] == "redacted"
+    assert replaced[0]["alias"] == "[REDACTED]"
 
 
 def test_without_a_terminal_it_refuses_rather_than_emitting_unreviewed_text(

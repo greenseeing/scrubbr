@@ -89,6 +89,12 @@ class TestConsistency:
         assert re.search(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", scrubbed("aa:bb:cc:dd:ee:ff"))
         assert re.search(r"[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}", scrubbed("aabb.ccdd.eeff"))
 
+    def test_the_same_ipv6_in_two_cases_shares_one_alias(self) -> None:
+        out = scrubbed("a 2a00:1450:4009:80f::200e b 2A00:1450:4009:80F::200E")
+        found = re.findall(r"2001:db8::[0-9a-f]+", out)
+        assert len(found) == 2
+        assert len(set(found)) == 1, "case must not split one address into two aliases"
+
     def test_repeated_value_findings_share_one_alias_and_it_is_not_the_original(self) -> None:
         result = scrub("a aa:bb:cc:dd:ee:ff b aa:bb:cc:dd:ee:ff")
         mac_findings = [f for f in result.findings if f.kind == Kind.MAC]
@@ -178,6 +184,91 @@ class TestAllowlist:
         out = scrubbed("peer 81.2.69.142")
         assert "81.2.69.142" not in out
         assert re.search(r"(?:203\.0\.113|198\.51\.100|192\.0\.2)\.\d+", out)
+
+
+class TestExtraLiterals:
+    def test_an_extra_hex_value_is_replaced_shape_preservingly_not_as_a_hostname(self) -> None:
+        value = "AB" * 16
+        out = scrubbed(f"id {value}", identity=LocalIdentity(extra=(value,)))
+        assert value not in out
+        assert re.search(r"id [0-9A-F]{32}", out)
+        assert "host-" not in out
+        assert "[REDACTED]" not in out
+
+    def test_the_machine_id_in_extra_is_scrubbed_as_hex_not_as_a_hostname(self) -> None:
+        machine_id = "3f2a1c7b4e6d8a0f3c5b7d9e1a2f4c6b"
+        out = scrubbed(f"id {machine_id}", identity=LocalIdentity(extra=(machine_id,)))
+        assert machine_id not in out
+        assert re.search(r"id [0-9a-f]{32}", out)
+        assert "host-" not in out
+
+    def test_an_extra_private_ipv4_is_scrubbed_while_other_private_addresses_survive(self) -> None:
+        out = scrubbed(
+            "bound 192.168.1.7 and 192.168.1.8",
+            identity=LocalIdentity(extra=("192.168.1.7",)),
+        )
+        assert "192.168.1.7" not in out
+        assert "192.168.1.8" in out, "only the declared address may be forced past the allowlist"
+        assert re.search(r"(?:203\.0\.113|198\.51\.100|192\.0\.2)\.\d+", out)
+
+    def test_an_extra_loopback_ipv4_is_scrubbed_even_though_loopback_is_normally_kept(self) -> None:
+        out = scrubbed("bound 127.0.0.1 now", identity=LocalIdentity(extra=("127.0.0.1",)))
+        assert "127.0.0.1" not in out
+        assert re.search(r"(?:203\.0\.113|198\.51\.100|192\.0\.2)\.\d+", out)
+
+    @pytest.mark.parametrize("address", ["fe80::1", "::1"])
+    def test_an_extra_kept_ipv6_address_is_scrubbed(self, address: str) -> None:
+        out = scrubbed(f"addr {address} up", identity=LocalIdentity(extra=(address,)))
+        assert f" {address} " not in out
+        assert "2001:db8::" in out
+
+    def test_an_extra_ipv6_is_forced_whatever_case_the_log_uses(self) -> None:
+        out = scrubbed("addr fe80::1 up", identity=LocalIdentity(extra=("FE80::1",)))
+        assert "fe80::1" not in out
+        assert "2001:db8::" in out
+
+    def test_a_forced_link_local_with_an_embedded_mac_still_correlates_with_the_bare_mac(
+        self,
+    ) -> None:
+        # Forcing may only flip keep decisions, never change how an address is scrubbed:
+        # the declared link-local must still resolve to the same alias as its bare MAC.
+        address = "fe80::0a00:27ff:fe12:3456"
+        out = scrubbed(
+            f"link {address} hw 08:00:27:12:34:56",
+            identity=LocalIdentity(extra=(address,)),
+        )
+        assert "0a00:27ff:fe12:3456" not in out
+        assert "08:00:27:12:34:56" not in out
+        mac = re.search(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", out)
+        assert mac is not None
+        octets = mac.group().split(":")
+        flipped = f"{int(octets[0], 16) ^ 0x02:02x}"
+        embedded = f"{flipped}{octets[1]}:{octets[2]}ff:fe{octets[3]}:{octets[4]}{octets[5]}"
+        assert embedded in out
+
+    def test_an_extra_name_becomes_redacted(self) -> None:
+        result = scrub(
+            "connecting to prod-db-07 now", identity=LocalIdentity(extra=("prod-db-07",))
+        )
+        assert "prod-db-07" not in result.text
+        assert "[REDACTED]" in result.text
+        assert result.counts[Kind.REDACTED] == 1
+
+    def test_every_extra_name_becomes_redacted_with_no_correlation_between_them(self) -> None:
+        out = scrubbed(
+            "alice pinged prod-db-07",
+            identity=LocalIdentity(extra=("alice", "prod-db-07")),
+        )
+        assert "alice" not in out
+        assert "prod-db-07" not in out
+        assert out.count("[REDACTED]") == 2
+
+    def test_an_extra_uuid_keeps_the_uuid_kind(self) -> None:
+        value = "550e8400-e29b-41d4-a716-446655440000"
+        result = scrub(f"session {value}", identity=LocalIdentity(extra=(value,)))
+        assert value not in result.text
+        assert "[REDACTED]" not in result.text
+        assert {f.kind for f in result.findings} == {Kind.UUID}
 
 
 class TestUuid:

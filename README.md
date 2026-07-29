@@ -93,7 +93,7 @@ question, pass `-y`.
 | `-y`, `--no-review` | skip the interactive review |
 | `-v`, `--verbose` | list every replaced value: what it was, how often it occurred, what it became |
 | `--strict` | refuse to emit anything while suspicious strings remain unscrubbed |
-| `--also TEXT` | also scrub this exact string; repeat the flag for several |
+| `--also TEXT` | also scrub this exact string; repeat the flag for several. IPs, long hex, UUIDs and emails keep their shape (IPs are replaced even when private or loopback); names become `[REDACTED]` |
 | `--no-identity` | don't seed the scanner with this machine's hostname, user and machine-id |
 
 The report normally shows only counts per category. With `-v` it also prints a table with
@@ -109,12 +109,19 @@ The table is sized to your window; values too long for their column are shortene
 middle (`9f2a1c7b…4c6b`). Be aware this prints the original sensitive values to your
 screen (stderr), so don't share that part.
 
-`--also` is for names only you know are sensitive — an internal server name, a project
-codename:
+`--also` is for values only you know are sensitive — an internal server name, a project
+codename, an address inside your own network:
 
 ```
-scrubbr app.log -o app.clean.txt --also prod-db-07 --also project-nimbus
+scrubbr app.log -o app.clean.txt --also prod-db-07 --also 10.1.2.7
 ```
+
+Each value's type is detected from its shape. An IP address, hex of 32+ characters, a UUID
+or an email is replaced the same way scrubbr replaces ones it finds on its own — same
+shape, same alias pool — and a declared IP is replaced even if it is private or loopback,
+which incidental matches are not. A value with no recognisable shape (a name) becomes
+`[REDACTED]`; note that every such name renders identically, so two declared names cannot
+be told apart in the output.
 
 ## What it replaces
 
@@ -157,7 +164,11 @@ Regex scrubbing has false negatives, and the failure mode is silent. Two mitigat
 ## Known limits
 
 - Hostnames are found by asking *this* system for its own name. A log from another machine
-  carries a hostname scrubbr cannot guess — pass it explicitly with `--also other-host`.
+  carries a hostname scrubbr cannot guess — pass it explicitly with `--also other-host`
+  (it will appear as `[REDACTED]`).
+- `--also` matches the exact spelling you give it. For IPv6 that means `--also fe80::1`
+  also covers `FE80::1` but not the longhand `fe80:0:0:0:0:0:0:1` — declare each spelling
+  the log uses.
 - Hex of 32+ characters is replaced with no exceptions, so checksums and 40-character git
   SHAs get scrambled too. That is deliberate: no special cases means nothing slips through.
 - Replacements are per-run. Sanitizing the same file twice gives different output; sanitize

@@ -76,7 +76,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="TEXT",
-        help="scrub this literal string too; repeatable, for names only you know",
+        help="scrub this value too; repeatable. IPs are always replaced (even private or"
+        " loopback), long hex, UUIDs and emails keep their shape; anything else becomes"
+        " [REDACTED]",
     )
     return parser.parse_args(argv)
 

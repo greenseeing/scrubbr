@@ -17,6 +17,7 @@ class Kind(StrEnum):
     HEX = "hex"
     EMAIL = "email"
     SECRET_VALUE = "secret_value"
+    REDACTED = "redacted"
     SSID = "ssid"
     HOSTNAME = "hostname"
     USERNAME = "username"

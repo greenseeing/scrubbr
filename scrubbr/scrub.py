@@ -77,7 +77,7 @@ def _sweep(
             if match.text.count(":") + 1 >= MIN_UNRESOLVED_GROUPS:
                 unresolved.append(match.text)
             continue
-        replacement = _replacement(kind, match.text, book)
+        replacement = _replacement(kind, match.text, book, match.forced)
         if replacement is None:
             continue
         findings.append(
@@ -143,17 +143,24 @@ def _splice(
     return "".join(out), written
 
 
-def _replacement(kind: Kind, text: str, book: AliasBook) -> str | None:
-    """The alias for this value, or None to leave the text exactly as it is."""
+def _replacement(kind: Kind, text: str, book: AliasBook, forced: bool = False) -> str | None:
+    """The alias for this value, or None to leave the text exactly as it is.
+
+    A forced value -- one the caller declared via --also -- only ever flips keep
+    decisions to scrub; it never changes how an already-scrubbed value is scrubbed.
+    """
     match kind:
         case Kind.MAC:
             if is_reserved_mac(text):
                 return None
         case Kind.IPV4:
-            if not _should_scrub_v4(text):
+            if not forced and not _should_scrub_v4(text):
                 return None
         case Kind.IPV6:
-            return _ipv6_replacement(text, book)
+            replacement = _ipv6_replacement(text, book)
+            if replacement is None and forced:
+                return book.alias_for(Kind.IPV6, text)
+            return replacement
         case Kind.USERNAME:
             if text in SYSTEM_USERNAMES:
                 return None

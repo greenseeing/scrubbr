@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from scrubbr.identity import LocalIdentity
 from scrubbr.kinds import Kind
-from scrubbr.shapes import EMAIL_PATTERN, HEX_PATTERN, UUID_PATTERN
+from scrubbr.shapes import EMAIL_PATTERN, HEX_PATTERN, UUID_PATTERN, classify_literal
 
 # An RSA-8192 key is around 12 KB of base64, so this fits any real key while keeping an
 # unterminated BEGIN marker from backtracking across the whole file.
@@ -32,6 +32,7 @@ class Rule:
     kind: Kind
     pattern: str
     value_group: str | None = None
+    forced: bool = False
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class Match:
     start: int
     end: int
     text: str
+    forced: bool = False
 
 
 # Ordered most-specific first. Alternation resolves precedence: at any position the
@@ -159,27 +161,33 @@ CONTEXTUAL_RULES: tuple[Rule, ...] = (
 def _literal_rules(
     identity: LocalIdentity, promoted: tuple[tuple[str, Kind], ...]
 ) -> tuple[Rule, ...]:
-    literals: list[tuple[str, Kind]] = []
+    literals: list[tuple[str, Kind, bool]] = []
     if identity.hostname:
-        literals.append((identity.hostname, Kind.HOSTNAME))
+        literals.append((identity.hostname, Kind.HOSTNAME, False))
         short = identity.hostname.split(".")[0]
         if short != identity.hostname:
-            literals.append((short, Kind.HOSTNAME))
-    literals.extend((value, Kind.HOSTNAME) for value in identity.extra)
+            literals.append((short, Kind.HOSTNAME, False))
+    # An extra value is explicitly declared, so it is scrubbed unconditionally -- forced
+    # past the keep-allowlists that judge only incidental matches.
+    literals.extend((value, classify_literal(value), True) for value in identity.extra)
     if identity.username:
-        literals.append((identity.username, Kind.USERNAME))
-    literals.extend(promoted)
+        literals.append((identity.username, Kind.USERNAME, False))
+    literals.extend((value, kind, False) for value, kind in promoted)
     # Longest first: a username is frequently a substring of the hostname ("dev" inside
     # "dev-thinkpad"), and the longer match has to win at that position.
-    literals.sort(key=lambda pair: len(pair[0]), reverse=True)
+    literals.sort(key=lambda entry: len(entry[0]), reverse=True)
     return tuple(
-        Rule(
-            f"literal_{index}",
-            kind,
-            rf"(?<![A-Za-z0-9_]){re.escape(value)}(?![A-Za-z0-9_])",
-        )
-        for index, (value, kind) in enumerate(literals)
+        Rule(f"literal_{index}", kind, _literal_pattern(value, kind), forced=forced)
+        for index, (value, kind, forced) in enumerate(literals)
     )
+
+
+def _literal_pattern(value: str, kind: Kind) -> str:
+    escaped = re.escape(value)
+    if kind is Kind.IPV6:
+        # Forcing must survive the log spelling FE80::1 as fe80::1.
+        escaped = f"(?i:{escaped})"
+    return rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
 
 
 @lru_cache(maxsize=64)
@@ -209,7 +217,9 @@ def detect(
         start, end = found.span(group)
         if start < 0 or start == end:
             continue
-        matches.append(Match(kind=rule.kind, start=start, end=end, text=text[start:end]))
+        matches.append(
+            Match(kind=rule.kind, start=start, end=end, text=text[start:end], forced=rule.forced)
+        )
     return matches
 
 

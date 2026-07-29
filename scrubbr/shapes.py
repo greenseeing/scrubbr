@@ -51,13 +51,34 @@ def classify(text: str) -> Kind | None:
     return None
 
 
+def classify_literal(text: str) -> Kind:
+    """The kind a user-declared literal reads as; REDACTED when its shape says nothing.
+
+    Unlike classify() this may return the IP kinds, which own keep-allowlists — safe only
+    because extra-literals are forced past those allowlists in scrub.
+    """
+    shaped = classify(text)
+    if shaped is not None:
+        return shaped
+    try:
+        ipaddress.IPv4Address(text)
+        return Kind.IPV4
+    except ValueError:
+        pass
+    try:
+        ipaddress.IPv6Address(text)
+        return Kind.IPV6
+    except ValueError:
+        return Kind.REDACTED
+
+
 def normalize(kind: Kind, text: str) -> str:
     match kind:
         case Kind.MAC:
             return text.lower().translate(_STRIP_SEPARATORS)
         case Kind.UUID:
             return text.lower().replace("-", "")
-        case Kind.HEX | Kind.FINGERPRINT:
+        case Kind.HEX | Kind.FINGERPRINT | Kind.IPV6:
             return text.lower()
         case _:
             return text
@@ -108,6 +129,8 @@ def mint(kind: Kind, normalized: str, rng: random.Random, index: int) -> str:
             if _is_hex(normalized):
                 return _random_hex(rng, len(normalized), normalized)
             return _random_from(rng, string.ascii_letters + string.digits, len(normalized))
+        case Kind.REDACTED:
+            return "[REDACTED]"
     raise AssertionError(f"no minter for {kind}")
 
 
