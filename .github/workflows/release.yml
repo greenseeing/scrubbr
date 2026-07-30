@@ -14,7 +14,8 @@ jobs:
       # PyPI trusted publishing: the workflow proves its identity with a short-lived OIDC
       # token, so no API token is stored here or in repository secrets.
       id-token: write
-      contents: read
+      # Creating the GitHub release for the tag.
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -28,4 +29,21 @@ jobs:
         run: uv run --isolated --no-project --with dist/*.whl tests/smoke.py
       - name: Smoke test the source distribution
         run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke.py
-      - run: uv publish
+      - name: Publish to PyPI
+        # --check-url skips files the index already has, so a run that failed after a
+        # successful upload can be retried instead of being stuck.
+        run: uv publish --check-url https://pypi.org/simple/
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v version="${GITHUB_REF_NAME#v}" '
+            $0 ~ "^## \\[" version "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]: / { next }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            dist/*

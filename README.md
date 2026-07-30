@@ -236,6 +236,10 @@ git tag v0.2.1 && git push origin main --tags
 ```
 
 The tag triggers `.github/workflows/release.yml`, which builds the wheel and source archive,
-smoke-tests both in an isolated environment, and publishes to PyPI using trusted publishing —
-no API token is stored anywhere. It refuses to publish if the tag and the version in
-`pyproject.toml` disagree, because a PyPI version can never be replaced once uploaded.
+smoke-tests both in an isolated environment, publishes to PyPI using trusted publishing — no
+API token is stored anywhere — and then opens a GitHub release for the tag, with notes taken
+from that version's section of the changelog and both artifacts attached.
+
+It refuses to publish if the tag and the version in `pyproject.toml` disagree, because a PyPI
+version can never be replaced once uploaded. The upload itself skips files the index already
+has, so a run that fails partway can be re-run safely.
