@@ -1,0 +1,33 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.0] - 2026-07-31
+
+First release published to PyPI. Earlier copies installed from git also called themselves `0.1.0`
+while missing most of the options below, so that version number was retired rather than reused.
+
+### Added
+
+- Scrub a file or piped stdin, replacing usernames, hostnames, IPs, MACs, UUIDs, emails, SSIDs,
+  keys and other identifying strings with harmless look-alikes. The same value always maps to the
+  same replacement, so the log still reads coherently.
+- Interactive review gate showing every proposed change before anything is emitted. scrubbr
+  refuses to emit rather than skip the gate when no terminal is available; `-y/--no-review` makes
+  skipping it an explicit choice.
+- `-o/--output` to write the scrubbed text to a file, leaving the original untouched.
+- `-v/--verbose` to list each replaced value with its occurrence count and alias.
+- `--strict` to exit non-zero rather than emit while suspicious strings remain unscrubbed.
+- `--no-identity` to skip seeding the scanner with the local hostname, user and machine-id.
+- `--also` to scrub extra values, repeatable, with the type of each value autodetected so IPs,
+  hex strings, UUIDs and emails keep their shape instead of all being aliased as hosts.
+- `--version`.
+- Width-aware tables for the stderr report when running on a terminal, JSON log lines otherwise.
+- Fallback to a stdio-backed terminal when `/dev/tty` cannot be opened.
+
+[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/greenseeing/scrubbr/releases/tag/v0.2.0

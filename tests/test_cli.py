@@ -1,6 +1,7 @@
 import builtins
 import json
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Never
 
@@ -76,6 +77,15 @@ def test_scrubbed_text_goes_to_stdout_and_the_report_to_stderr(
     assert "aa:bb:cc:dd:ee:ff" not in captured.out
     assert captured.out.endswith("\n")
     assert "mac" in captured.err
+
+
+def test_version_reports_the_installed_package_version(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out.strip() == f"scrubbr {version('scrubbr')}"
 
 
 def test_verbose_reports_the_original_text_count_and_alias_for_a_repeated_value(

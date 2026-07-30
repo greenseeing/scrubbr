@@ -6,6 +6,7 @@ import sys
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
+from importlib.metadata import version
 from pathlib import Path
 
 import structlog
@@ -32,6 +33,11 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scrubbr",
         description="Sanitize Linux diagnostics before pasting them into an LLM.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {version('scrubbr')}",
     )
     parser.add_argument(
         "infile",

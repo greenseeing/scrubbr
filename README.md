@@ -18,14 +18,36 @@ You need Python 3.13 or newer. Then, with either [uv](https://docs.astral.sh/uv/
 [pipx](https://pipx.pypa.io/):
 
 ```
+uv tool install scrubbr
+```
+
+```
+pipx install scrubbr
+```
+
+After that, the `scrubbr` command is available in your terminal, and `scrubbr --version`
+tells you which release you have.
+
+To run unreleased changes, install from the repository instead:
+
+```
 uv tool install git+https://github.com/greenseeing/scrubbr
 ```
 
+## Updating
+
 ```
-pipx install git+https://github.com/greenseeing/scrubbr
+uv tool upgrade scrubbr
 ```
 
-After that, the `scrubbr` command is available in your terminal.
+or `pipx upgrade scrubbr`. [CHANGELOG.md](CHANGELOG.md) lists what changed in each release.
+
+A git install is a moving branch rather than a version, so there is nothing for `upgrade` to
+compare against; reinstall it instead:
+
+```
+uv tool install --force git+https://github.com/greenseeing/scrubbr
+```
 
 ## How to use it
 
@@ -95,6 +117,7 @@ question, pass `-y`.
 | `--strict` | refuse to emit anything while suspicious strings remain unscrubbed |
 | `--also TEXT` | also scrub this exact string; repeat the flag for several. IPs, long hex, UUIDs and emails keep their shape (IPs are replaced even when private or loopback); names become `[REDACTED]` |
 | `--no-identity` | don't seed the scanner with this machine's hostname, user and machine-id |
+| `--version` | print the installed version and exit |
 
 The report normally shows only counts per category. With `-v` it also prints a table with
 one row per distinct value, so you can see exactly what maps to what:
@@ -196,3 +219,23 @@ long as both are genuinely interactive. Exit 3 only happens when neither is avai
 and it exists because the alternative is worse: emitting unreviewed text exactly when the
 safety gate could not run. Skipping the review should be your decision, not a fallback.
 On any refusal, `-o` writes nothing — the output file is only created after you approve.
+
+## Releasing
+
+For maintainers. Bump the version:
+
+```
+uv version --bump patch
+```
+
+Move the entries under `## [Unreleased]` in `CHANGELOG.md` into a section for the new
+version, commit both files, then tag:
+
+```
+git tag v0.2.1 && git push origin main --tags
+```
+
+The tag triggers `.github/workflows/release.yml`, which builds the wheel and source archive,
+smoke-tests both in an isolated environment, and publishes to PyPI using trusted publishing —
+no API token is stored anywhere. It refuses to publish if the tag and the version in
+`pyproject.toml` disagree, because a PyPI version can never be replaced once uploaded.

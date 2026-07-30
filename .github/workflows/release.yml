@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      # PyPI trusted publishing: the workflow proves its identity with a short-lived OIDC
+      # token, so no API token is stored here or in repository secrets.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - run: uv python install 3.13
+      - name: Check the tag matches the package version
+        # A PyPI version can never be replaced, so a tag that disagrees with pyproject.toml
+        # has to fail here rather than publish the wrong number.
+        run: test "v$(uv version --short --frozen)" = "$GITHUB_REF_NAME"
+      - run: uv build
+      - name: Smoke test the wheel
+        run: uv run --isolated --no-project --with dist/*.whl tests/smoke.py
+      - name: Smoke test the source distribution
+        run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke.py
+      - run: uv publish

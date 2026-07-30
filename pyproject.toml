@@ -1,7 +1,8 @@
 [project]
 name = "scrubbr"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sanitize Linux diagnostics before pasting them into an LLM"
+readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
@@ -12,6 +13,11 @@ dependencies = [
 
 [project.scripts]
 scrubbr = "scrubbr.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/greenseeing/scrubbr"
+Repository = "https://github.com/greenseeing/scrubbr"
+Changelog = "https://github.com/greenseeing/scrubbr/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
