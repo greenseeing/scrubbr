@@ -6,39 +6,43 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
+## [0.3.0] - 2026-08-03
 
-- `open_terminal()` now successfully opens `/dev/tty` on real terminals: bypasses the seek probe that fails on ptys by using `TextIOWrapper(FileIO(...))` instead of plain `open()`.
+The review is now a full-screen interface. Piped and scripted use (`-y`, non-interactive
+runs, exit codes, stdout purity) is unchanged; `--plain` keeps the classic prompt.
 
 ### Added
 
-- `scrub()` accepts keyword-only `keep` and `overrides` parameters to allow callers to accept,
-  reject, or modify individual findings after shape reclassification. Added `decision_key()`
-  helper to construct unique keys for findings.
-- Keeping a labelled secret now un-promotes its bare occurrences to prevent inconsistent masking.
-- A decisions layer (Decisions/ReviewRequest/ReviewOutcome dataclasses) with apply_decisions()
-  to re-scrub with reviewer changes applied, routing new text through --also machinery while
-  maintaining alias stability via a shared AliasBook.
-- Full-screen review app infrastructure: `ScreenTerminal` protocol, `supports_tui()` TypeGuard,
-  `tty_stdio()` context manager for redirecting stdio to the review terminal, and an injectable
-  `run_app` parameter on `main()` to route capable terminals to a full-screen review app.
-  Added `--plain` flag to force line-mode review when a full-screen app is available.
-- Full-screen review is now the default on capable terminals (`ReviewApp`), showing findings in
-  an interactive DataTable with live re-scrubbing. Pressing y opens a colored full-diff screen
-  (unified diff with 2 context lines); use `--plain` to force the classic line-mode y/N prompt.
-  Made `render_diff()` and `render_residuals()` public in review.py for reuse.
-- Review screen now supports fuzzy-finding extra text via the finder ("a" key, with candidates
-  drawn from residuals and input tokens, fuzzy-ranked and sorted with exact matches first), and
-  promoting residual warnings to scrubbed additions via space key on a warning row.
-- Review screen now allows choosing a replacement for each finding: the minted alias, [REDACTED], or custom text (r key; re-picking the minted alias clears the override).
+- Full-screen interactive review, the default on capable terminals: a table of every
+  distinct value with its category, occurrence count and replacement. `space` keeps or
+  scrubs the selected value, `a` fuzzy-finds additional text to scrub (any token from the
+  input, or an exact pasted string), `r` chooses the replacement — the minted alias,
+  `[REDACTED]`, or custom text — `y` shows a colored full diff before anything is
+  emitted, and `q` aborts. Every change re-runs the scrubber with aliases held stable.
+- Suspicious-but-unrecognised strings appear in the review as `warn` rows; one `space`
+  promotes one to a real replacement everywhere it occurs.
+- `--plain` to review with the classic line-mode y/N prompt.
+- For embedders: `scrub()` accepts keyword-only `keep` and `overrides`, and a decisions
+  layer (`Decisions`, `apply_decisions()`) re-scrubs with reviewer changes while a shared
+  `AliasBook` keeps every already-minted alias stable. `render_diff()` and
+  `render_residuals()` are public. Keeping a labelled secret also un-promotes its bare
+  occurrences.
+
+### Fixed
+
+- The review now genuinely opens `/dev/tty`: `open("/dev/tty", "r+")` fails on every
+  pty-backed terminal (update mode demands a seekable stream), so the review had always
+  silently fallen back to stdio.
 
 ### Changed
 
-- `main()` now creates a single `AliasBook` per run and passes it to `scrub()`, ensuring
-  interactive recomputes never mint new aliases for existing findings.
-- Confirmed reviews with amendments log one "amended" event with kept/added/replaced counts.
-- Rule matching now reads Match.lastgroup instead of probing every named group per match: 8% faster on worst-case-dense 2 MB logs (2.754s → 2.539s). Case matching in value replacement also optimized: one C-level string comparison replaces the per-character generator, which dominated the replacement path's profile.
-
+- `textual` is now a runtime dependency.
+- One `AliasBook` per run: interactive recomputes can never re-mint an existing alias.
+- A confirmed review with amendments logs one `amended` event with kept/added/replaced
+  counts.
+- Detection is ~8% faster on worst-case-dense logs (2 MB: 2.754s → 2.539s): the matched
+  rule is read from `Match.lastgroup` instead of probing every named group, and case
+  matching no longer walks values character by character.
 
 ## [0.2.0] - 2026-07-31
 
@@ -63,5 +67,6 @@ while missing most of the options below, so that version number was retired rath
 - Width-aware tables for the stderr report when running on a terminal, JSON log lines otherwise.
 - Fallback to a stdio-backed terminal when `/dev/tty` cannot be opened.
 
-[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/greenseeing/scrubbr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/greenseeing/scrubbr/releases/tag/v0.2.0
