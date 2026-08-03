@@ -108,9 +108,9 @@ def confirm(
     The caller owns the terminal: opening /dev/tty (or failing to) is its decision,
     which is also what lets a test hold the review on a fake one.
     """
-    diff = _render_diff(original, scrubbed)
+    diff = render_diff(original, scrubbed)
     terminal.write(f"{diff}\n" if diff else "no changes\n")
-    warning = _render_residuals(residuals)
+    warning = render_residuals(residuals)
     if warning:
         terminal.write(f"\n{warning}\n")
     terminal.write("\nemit scrubbed text? [y/N] ")
@@ -119,7 +119,7 @@ def confirm(
     return answer in {"y", "yes"}
 
 
-def _render_diff(original: str, scrubbed: str, context: int = CONTEXT_LINES) -> str:
+def render_diff(original: str, scrubbed: str, context: int = CONTEXT_LINES) -> str:
     lines = difflib.unified_diff(
         original.splitlines(),
         scrubbed.splitlines(),
@@ -131,7 +131,7 @@ def _render_diff(original: str, scrubbed: str, context: int = CONTEXT_LINES) -> 
     return "\n".join(lines)
 
 
-def _render_residuals(residuals: Sequence[Residual]) -> str:
+def render_residuals(residuals: Sequence[Residual]) -> str:
     if not residuals:
         return ""
     rows = [f"  line {r.line}: {r.text[:60]}  ({r.reason})" for r in residuals]

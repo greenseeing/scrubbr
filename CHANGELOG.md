@@ -23,9 +23,10 @@ All notable changes to this project are documented here. The format follows
   `tty_stdio()` context manager for redirecting stdio to the review terminal, and an injectable
   `run_app` parameter on `main()` to route capable terminals to a full-screen review app.
   Added `--plain` flag to force line-mode review when a full-screen app is available.
-- Textual-based full-screen review app (`ReviewApp`) that displays findings in an
-  interactive DataTable, allowing users to keep or scrub individual values with live
-  re-scrubbing. Activated via the experimental `--tui` flag on capable terminals.
+- Full-screen review is now the default on capable terminals (`ReviewApp`), showing findings in
+  an interactive DataTable with live re-scrubbing. Pressing y opens a colored full-diff screen
+  (unified diff with 2 context lines); use `--plain` to force the classic line-mode y/N prompt.
+  Made `render_diff()` and `render_residuals()` public in review.py for reuse.
 - Review screen now supports fuzzy-finding extra text via the finder ("a" key, with candidates
   drawn from residuals and input tokens, fuzzy-ranked and sorted with exact matches first), and
   promoting residual warnings to scrubbed additions via space key on a warning row.
@@ -35,6 +36,7 @@ All notable changes to this project are documented here. The format follows
 
 - `main()` now creates a single `AliasBook` per run and passes it to `scrub()`, ensuring
   interactive recomputes never mint new aliases for existing findings.
+- Confirmed reviews with amendments log one "amended" event with kept/added/replaced counts.
 
 
 ## [0.2.0] - 2026-07-31

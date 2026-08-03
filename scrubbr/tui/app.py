@@ -11,7 +11,7 @@ from scrubbr.kinds import Finding, Kind, Residual
 from scrubbr.report import KIND_ORDER, clip
 from scrubbr.scrub import decision_key
 from scrubbr.tui.fuzzy import candidates
-from scrubbr.tui.screens import FuzzyFindScreen, ReplacementScreen
+from scrubbr.tui.screens import DiffScreen, FuzzyFindScreen, ReplacementScreen
 
 # A row stands for a finding (its decision key) or for a residual (its bare text).
 RowRef = tuple[Kind, str] | str
@@ -87,7 +87,8 @@ class ReviewApp(App[ReviewOutcome]):
         Binding("space", "toggle_row", "keep/scrub"),
         Binding("a", "add_text", "add text"),
         Binding("r", "set_replacement", "replacement"),
-        Binding("y", "accept", "emit"),
+        Binding("y", "accept", "diff & emit"),
+        Binding("d", "accept", "diff", show=False),
         Binding("q", "abort", "abort"),
         Binding("escape", "abort", "abort", show=False),
         Binding("j", "cursor_down", show=False),
@@ -175,7 +176,15 @@ class ReviewApp(App[ReviewOutcome]):
         self._recompute()
 
     def action_accept(self) -> None:
-        self.exit(ReviewOutcome(confirmed=True, result=self._result, decisions=self._decisions))
+        def verdict(confirmed: bool | None) -> None:
+            if confirmed:
+                self.exit(
+                    ReviewOutcome(confirmed=True, result=self._result, decisions=self._decisions)
+                )
+
+        self.push_screen(
+            DiffScreen(self._request.text, self._result.text, self._result.residuals), verdict
+        )
 
     def action_abort(self) -> None:
         self.exit(

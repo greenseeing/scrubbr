@@ -95,17 +95,32 @@ scripts can parse it.
 
 ### The review step
 
-Before emitting anything, scrubbr shows a diff on your terminal: every line it changed,
-original next to replacement, plus a warning list of anything that *looks* sensitive but
-that it didn't recognise well enough to rewrite. It then asks:
+Before emitting anything, scrubbr opens a full-screen review on your terminal: a table
+with one row per distinct value it wants to replace — its category, how often it occurs,
+and what it will become. Anything that *looks* sensitive but that scrubbr didn't
+recognise well enough to rewrite is listed too, as a `warn` row. From there:
+
+| Key | What it does |
+|---|---|
+| `space` | keep the selected value as it is (press again to scrub it after all); on a `warn` row, scrub that text too |
+| `a` | scrub additional text — type to fuzzy-find any token from the input, or enter an exact string |
+| `r` | choose the selected value's replacement: the minted alias, `[REDACTED]`, or something you type |
+| `y` | show the full diff; `y` again emits, `Escape` goes back to the table |
+| `q` | abort — nothing is printed and no file is written |
+
+Every change re-runs the scrubber, so a value you keep is restored at every occurrence
+and text you add is replaced at every occurrence, with the report and warnings kept
+honest throughout.
+
+With `--plain` — or on a terminal too limited for the full screen — you get the classic
+prompt instead: the diff, the warning list, and one question:
 
 ```
 emit scrubbed text? [y/N]
 ```
 
-Type `y` to approve. Anything else (including just pressing Enter) discards the output —
-nothing is printed and no file is written. If you trust a run and want to skip the
-question, pass `-y`.
+Type `y` to approve. Anything else (including just pressing Enter) discards the output.
+If you trust a run and want to skip the review entirely, pass `-y`.
 
 ### Options
 
@@ -113,6 +128,7 @@ question, pass `-y`.
 |---|---|
 | `-o FILE`, `--output FILE` | save the cleaned text to `FILE` instead of printing it |
 | `-y`, `--no-review` | skip the interactive review |
+| `--plain` | review with the classic y/N prompt instead of the full-screen interface |
 | `-v`, `--verbose` | list every replaced value: what it was, how often it occurred, what it became |
 | `--strict` | refuse to emit anything while suspicious strings remain unscrubbed |
 | `--also TEXT` | also scrub this exact string; repeat the flag for several. IPs, long hex, UUIDs and emails keep their shape (IPs are replaced even when private or loopback); names become `[REDACTED]` |

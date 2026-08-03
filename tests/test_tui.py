@@ -1,12 +1,14 @@
 import random
+from typing import Any
 
+from textual.pilot import Pilot
 from textual.widgets import DataTable, OptionList
 
 from scrubbr import AliasBook, Kind, LocalIdentity
 from scrubbr.decisions import ReviewRequest
 from scrubbr.scrub import decision_key, scrub
 from scrubbr.tui.app import ReviewApp, finding_rows
-from scrubbr.tui.screens import FuzzyFindScreen, ReplacementScreen
+from scrubbr.tui.screens import DiffScreen, FuzzyFindScreen, ReplacementScreen
 
 SAMPLE = "host box hw aa:bb:cc:dd:ee:ff up\npeer aa:bb:cc:dd:ee:ff again\n"
 
@@ -17,6 +19,13 @@ def request_for(text: str) -> ReviewRequest:
     return ReviewRequest(
         text=text, result=scrub(text, identity, book), identity=identity, book=book
     )
+
+
+async def emit(pilot: Pilot[Any]) -> None:
+    """Approve: y opens the diff screen, y again confirms."""
+    await pilot.press("y")
+    await pilot.pause()
+    await pilot.press("y")
 
 
 def test_finding_rows_group_occurrences_of_one_value() -> None:
@@ -61,7 +70,8 @@ async def test_space_flips_the_status_cell() -> None:
 async def test_keeping_then_accepting_emits_the_original_value() -> None:
     app = ReviewApp(request_for(SAMPLE))
     async with app.run_test() as pilot:
-        await pilot.press("space", "y")
+        await pilot.press("space")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.confirmed is True
@@ -73,7 +83,8 @@ async def test_toggling_twice_restores_the_exact_scrubbed_text() -> None:
     request = request_for(SAMPLE)
     app = ReviewApp(request)
     async with app.run_test() as pilot:
-        await pilot.press("space", "space", "y")
+        await pilot.press("space", "space")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.result.text == request.result.text, "the shared book must reuse the alias"
@@ -84,11 +95,39 @@ async def test_accepting_without_changes_returns_the_unamended_result() -> None:
     request = request_for(SAMPLE)
     app = ReviewApp(request)
     async with app.run_test() as pilot:
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.confirmed is True
     assert outcome.result.text == request.result.text
+
+
+async def test_y_shows_the_diff_before_emitting() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        assert isinstance(app.screen, DiffScreen)
+        assert app.return_value is None, "nothing may be emitted before the diff is seen"
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.confirmed is True
+
+
+async def test_escape_at_the_diff_returns_to_the_table() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, DiffScreen)
+        assert app.return_value is None
+        await pilot.press("q")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.confirmed is False
 
 
 async def test_aborting_returns_unconfirmed() -> None:
@@ -110,7 +149,7 @@ async def test_a_opens_the_finder_and_the_choice_is_scrubbed_everywhere() -> Non
         await pilot.press(*"proddb07")
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.decisions.additions == ("proddb07",)
@@ -125,7 +164,7 @@ async def test_escape_leaves_the_finder_without_adding() -> None:
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.decisions.additions == ()
@@ -153,7 +192,7 @@ async def test_r_offers_redacted_and_applies_it_everywhere() -> None:
         await pilot.pause()
         table = app.query_one(DataTable)
         assert table.get_row_at(0)[4] == "[REDACTED]"
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.result.text.count("[REDACTED]") == 2
@@ -172,7 +211,7 @@ async def test_a_custom_replacement_is_typed_and_applied() -> None:
         await pilot.press(*"mylaptop")
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.result.text.count("mylaptop") == 2
@@ -193,7 +232,7 @@ async def test_choosing_the_minted_alias_back_removes_the_override() -> None:
         assert app.screen.query_one(OptionList).highlighted == 1, "the active choice leads"
         await pilot.press("up", "enter")
         await pilot.pause()
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert outcome.decisions.overrides == {}
@@ -216,7 +255,7 @@ async def test_space_on_a_warn_row_promotes_the_residual() -> None:
         await pilot.press("space")
         table = app.query_one(DataTable)
         assert table.get_row_at(0)[0] == "scrub"
-        await pilot.press("y")
+        await emit(pilot)
     outcome = app.return_value
     assert outcome is not None
     assert token not in outcome.result.text

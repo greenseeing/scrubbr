@@ -1,16 +1,21 @@
+from collections.abc import Sequence
 from typing import ClassVar
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList, Static
+from textual.containers import Vertical, VerticalScroll
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Footer, Input, OptionList, Static
 
+from scrubbr.kinds import Residual
 from scrubbr.report import clip
+from scrubbr.review import render_diff, render_residuals
 from scrubbr.tui.fuzzy import options_for
 
 REDACTED_TEXT = "[REDACTED]"
 CUSTOM_LABEL = "custom…"
+DIFF_CONTEXT = 2
 
 
 class FuzzyFindScreen(ModalScreen[str | None]):
@@ -146,3 +151,60 @@ class ReplacementScreen(ModalScreen[str | None]):
         custom = self.query_one(Input)
         custom.value = prefill
         custom.remove_class("hidden")
+
+
+class DiffScreen(Screen[bool]):
+    """The full diff — the last look before the scrubbed text is emitted."""
+
+    DEFAULT_CSS = """
+    DiffScreen VerticalScroll {
+        padding: 0 1;
+    }
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("y", "confirm", "emit"),
+        Binding("enter", "confirm", "emit", show=False),
+        Binding("escape", "back", "back"),
+        Binding("b", "back", "back", show=False),
+    ]
+
+    def __init__(self, original: str, scrubbed: str, residuals: Sequence[Residual]) -> None:
+        super().__init__()
+        self._original = original
+        self._scrubbed = scrubbed
+        self._residuals = residuals
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll():
+            yield Static(self._rendered())
+        yield Footer()
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_back(self) -> None:
+        self.dismiss(False)
+
+    def _rendered(self) -> Text:
+        body = Text()
+        diff = render_diff(self._original, self._scrubbed, context=DIFF_CONTEXT)
+        if not diff:
+            body.append("no changes\n", "dim")
+        for line in diff.splitlines():
+            body.append(line + "\n", _diff_style(line))
+        warning = render_residuals(self._residuals)
+        if warning:
+            body.append("\n")
+            body.append(warning + "\n", "yellow")
+        return body
+
+
+def _diff_style(line: str) -> str:
+    if line.startswith("+"):
+        return "green"
+    if line.startswith("-"):
+        return "red"
+    if line.startswith("@@"):
+        return "dim"
+    return ""

@@ -527,14 +527,17 @@ def test_end_to_end_the_real_tui_runs_on_the_pty_and_stdout_stays_clean(
             except OSError:
                 return
             if not pressed and rendered:
+                # First y opens the diff screen, second confirms it.
                 time.sleep(0.5)
+                os.write(primary, b"y")
+                time.sleep(0.7)
                 os.write(primary, b"y")
                 pressed = True
 
     driver = threading.Thread(target=drive, daemon=True)
     driver.start()
     try:
-        exit_code = main([str(sample_file), "--no-identity", "--tui"], open_tty=lambda: terminal)
+        exit_code = main([str(sample_file), "--no-identity"], open_tty=lambda: terminal)
     finally:
         stop.set()
         driver.join(timeout=5)
