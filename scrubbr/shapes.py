@@ -205,7 +205,9 @@ def _mint_uuid(rng: random.Random, like: str) -> str:
 
 
 def _match_case(value: str, like: str) -> str:
-    return value.upper() if any(c.isupper() for c in like) else value
+    # One C-level comparison instead of a per-character generator: this runs once per
+    # replacement and dominated the replacement path's profile.
+    return value.upper() if like != like.lower() else value
 
 
 def _format_mac(canonical: str, like: str) -> str:

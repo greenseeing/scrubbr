@@ -37,6 +37,7 @@ All notable changes to this project are documented here. The format follows
 - `main()` now creates a single `AliasBook` per run and passes it to `scrub()`, ensuring
   interactive recomputes never mint new aliases for existing findings.
 - Confirmed reviews with amendments log one "amended" event with kept/added/replaced counts.
+- Rule matching now reads Match.lastgroup instead of probing every named group per match: 8% faster on worst-case-dense 2 MB logs (2.754s → 2.539s). Case matching in value replacement also optimized: one C-level string comparison replaces the per-character generator, which dominated the replacement path's profile.
 
 
 ## [0.2.0] - 2026-07-31

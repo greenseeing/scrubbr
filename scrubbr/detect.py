@@ -212,7 +212,12 @@ def detect(
     pattern, by_name = _compiled(identity, promoted)
     matches: list[Match] = []
     for found in pattern.finditer(text):
-        rule = by_name[_which(found, by_name)]
+        # lastgroup is always the winning rule's own group: value groups nested inside an
+        # alternative close before the group that encloses them.
+        name = found.lastgroup
+        if name is None:
+            raise AssertionError("a match must belong to exactly one rule")
+        rule = by_name[name]
         group = rule.value_group or rule.name
         start, end = found.span(group)
         if start < 0 or start == end:
@@ -221,10 +226,3 @@ def detect(
             Match(kind=rule.kind, start=start, end=end, text=text[start:end], forced=rule.forced)
         )
     return matches
-
-
-def _which(found: re.Match[str], by_name: dict[str, Rule]) -> str:
-    for name in by_name:
-        if found.group(name) is not None:
-            return name
-    raise AssertionError("a match must belong to exactly one rule")
