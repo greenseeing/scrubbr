@@ -7,9 +7,14 @@ from textual.binding import Binding, BindingType
 from textual.widgets import DataTable, Footer, Static
 
 from scrubbr.decisions import Decisions, ReviewOutcome, ReviewRequest, apply_decisions
-from scrubbr.kinds import Finding, Kind
+from scrubbr.kinds import Finding, Kind, Residual
 from scrubbr.report import KIND_ORDER, clip
 from scrubbr.scrub import decision_key
+from scrubbr.tui.fuzzy import candidates
+from scrubbr.tui.screens import FuzzyFindScreen
+
+# A row stands for a finding (its decision key) or for a residual (its bare text).
+RowRef = tuple[Kind, str] | str
 
 
 @dataclass(frozen=True)
@@ -19,6 +24,25 @@ class FindingRow:
     count: int
     text: str
     alias: str
+
+
+@dataclass(frozen=True)
+class ResidualRow:
+    text: str
+    count: int
+    reason: str
+
+
+def residual_rows(residuals: list[Residual]) -> list[ResidualRow]:
+    counts: Counter[str] = Counter()
+    reasons: dict[str, str] = {}
+    for residual in residuals:
+        counts[residual.text] += 1
+        reasons.setdefault(residual.text, residual.reason)
+    return [
+        ResidualRow(text=text, count=count, reason=reasons[text])
+        for text, count in counts.items()
+    ]
 
 
 def finding_rows(findings: list[Finding]) -> list[FindingRow]:
@@ -61,6 +85,7 @@ class ReviewApp(App[ReviewOutcome]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("space", "toggle_row", "keep/scrub"),
+        Binding("a", "add_text", "add text"),
         Binding("y", "accept", "emit"),
         Binding("q", "abort", "abort"),
         Binding("escape", "abort", "abort", show=False),
@@ -76,7 +101,7 @@ class ReviewApp(App[ReviewOutcome]):
         # Kept values drop out of the recomputed findings, but their rows must stay on
         # screen or there would be nothing left to toggle back.
         self._known: dict[tuple[Kind, str], FindingRow] = {}
-        self._row_keys: list[tuple[Kind, str]] = []
+        self._row_keys: list[RowRef] = []
 
     def compose(self) -> ComposeResult:
         yield Static(id="summary")
@@ -94,13 +119,34 @@ class ReviewApp(App[ReviewOutcome]):
         table = self.query_one(DataTable)
         if not self._row_keys:
             return
-        key = self._row_keys[table.cursor_row]
+        ref = self._row_keys[table.cursor_row]
+        if isinstance(ref, str):
+            self._add(ref)
+            return
+        key = ref
         kept = set(self._decisions.keep)
         if key in kept:
             kept.discard(key)
         else:
             kept.add(key)
         self._decisions = replace(self._decisions, keep=frozenset(kept))
+        self._recompute()
+
+    def action_add_text(self) -> None:
+        pool = candidates(self._request.text, self._result.residuals)
+
+        def applied(value: str | None) -> None:
+            if value:
+                self._add(value)
+
+        self.push_screen(FuzzyFindScreen(self._request.text, pool), applied)
+
+    def _add(self, value: str) -> None:
+        if value in self._decisions.additions:
+            return
+        self._decisions = replace(
+            self._decisions, additions=(*self._decisions.additions, value)
+        )
         self._recompute()
 
     def action_accept(self) -> None:
@@ -140,6 +186,9 @@ class ReviewApp(App[ReviewOutcome]):
                 "" if kept else clip(row.alias),
             )
             self._row_keys.append(row.key)
+        for residual in residual_rows(self._result.residuals):
+            table.add_row("warn", residual.reason, str(residual.count), clip(residual.text), "")
+            self._row_keys.append(residual.text)
         if self._row_keys:
             table.move_cursor(row=min(cursor, len(self._row_keys) - 1))
         self._update_summary()

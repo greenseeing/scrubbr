@@ -6,6 +6,7 @@ from scrubbr import AliasBook, Kind, LocalIdentity
 from scrubbr.decisions import ReviewRequest
 from scrubbr.scrub import decision_key, scrub
 from scrubbr.tui.app import ReviewApp, finding_rows
+from scrubbr.tui.screens import FuzzyFindScreen
 
 SAMPLE = "host box hw aa:bb:cc:dd:ee:ff up\npeer aa:bb:cc:dd:ee:ff again\n"
 
@@ -97,3 +98,61 @@ async def test_aborting_returns_unconfirmed() -> None:
     outcome = app.return_value
     assert outcome is not None
     assert outcome.confirmed is False
+
+
+async def test_a_opens_the_finder_and_the_choice_is_scrubbed_everywhere() -> None:
+    text = "connecting to proddb07 now; proddb07 replied\n"
+    app = ReviewApp(request_for(text))
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, FuzzyFindScreen)
+        await pilot.press(*"proddb07")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.decisions.additions == ("proddb07",)
+    assert "proddb07" not in outcome.result.text
+    assert outcome.result.text.count("[REDACTED]") == 2
+
+
+async def test_escape_leaves_the_finder_without_adding() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.decisions.additions == ()
+
+
+async def test_a_residual_is_listed_as_a_warn_row() -> None:
+    token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    app = ReviewApp(request_for(f"tok {token} issued\n"))
+    async with app.run_test():
+        table = app.query_one(DataTable)
+        assert table.row_count == 1
+        status, reason, _count, _text, alias = table.get_row_at(0)
+        assert status == "warn"
+        assert reason == "known credential prefix"
+        assert alias == ""
+
+
+async def test_space_on_a_warn_row_promotes_the_residual() -> None:
+    token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    app = ReviewApp(request_for(f"tok {token} issued\n"))
+    async with app.run_test() as pilot:
+        await pilot.press("space")
+        table = app.query_one(DataTable)
+        assert table.get_row_at(0)[0] == "scrub"
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert token not in outcome.result.text
+    assert outcome.decisions.additions == (token,)
+    assert not outcome.result.residuals

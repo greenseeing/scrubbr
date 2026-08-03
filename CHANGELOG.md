@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format follows
 - Textual-based full-screen review app (`ReviewApp`) that displays findings in an
   interactive DataTable, allowing users to keep or scrub individual values with live
   re-scrubbing. Activated via the experimental `--tui` flag on capable terminals.
+- Review screen now supports fuzzy-finding extra text via the finder ("a" key, with candidates
+  drawn from residuals and input tokens, fuzzy-ranked and sorted with exact matches first), and
+  promoting residual warnings to scrubbed additions via space key on a warning row.
 
 ### Changed
 
