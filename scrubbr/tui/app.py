@@ -11,7 +11,7 @@ from scrubbr.kinds import Finding, Kind, Residual
 from scrubbr.report import KIND_ORDER, clip
 from scrubbr.scrub import decision_key
 from scrubbr.tui.fuzzy import candidates
-from scrubbr.tui.screens import FuzzyFindScreen
+from scrubbr.tui.screens import FuzzyFindScreen, ReplacementScreen
 
 # A row stands for a finding (its decision key) or for a residual (its bare text).
 RowRef = tuple[Kind, str] | str
@@ -86,6 +86,7 @@ class ReviewApp(App[ReviewOutcome]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("space", "toggle_row", "keep/scrub"),
         Binding("a", "add_text", "add text"),
+        Binding("r", "set_replacement", "replacement"),
         Binding("y", "accept", "emit"),
         Binding("q", "abort", "abort"),
         Binding("escape", "abort", "abort", show=False),
@@ -140,6 +141,30 @@ class ReviewApp(App[ReviewOutcome]):
                 self._add(value)
 
         self.push_screen(FuzzyFindScreen(self._request.text, pool), applied)
+
+    def action_set_replacement(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._row_keys:
+            return
+        ref = self._row_keys[table.cursor_row]
+        if isinstance(ref, str) or ref in self._decisions.keep:
+            return
+        row = self._known[ref]
+        default = self._request.book.alias_for(row.kind, row.text)
+
+        def applied(value: str | None) -> None:
+            if value is None:
+                return
+            overrides = dict(self._decisions.overrides)
+            if value == default:
+                overrides.pop(ref, None)
+            else:
+                overrides[ref] = value
+            self._decisions = replace(self._decisions, overrides=overrides)
+            self._recompute()
+
+        current = self._decisions.overrides.get(ref)
+        self.push_screen(ReplacementScreen(row.text, default, current), applied)
 
     def _add(self, value: str) -> None:
         if value in self._decisions.additions:

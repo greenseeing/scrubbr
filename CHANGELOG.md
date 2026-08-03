@@ -29,6 +29,7 @@ All notable changes to this project are documented here. The format follows
 - Review screen now supports fuzzy-finding extra text via the finder ("a" key, with candidates
   drawn from residuals and input tokens, fuzzy-ranked and sorted with exact matches first), and
   promoting residual warnings to scrubbed additions via space key on a warning row.
+- Review screen now allows choosing a replacement for each finding: the minted alias, [REDACTED], or custom text (r key; re-picking the minted alias clears the override).
 
 ### Changed
 

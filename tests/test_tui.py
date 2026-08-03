@@ -1,12 +1,12 @@
 import random
 
-from textual.widgets import DataTable
+from textual.widgets import DataTable, OptionList
 
 from scrubbr import AliasBook, Kind, LocalIdentity
 from scrubbr.decisions import ReviewRequest
 from scrubbr.scrub import decision_key, scrub
 from scrubbr.tui.app import ReviewApp, finding_rows
-from scrubbr.tui.screens import FuzzyFindScreen
+from scrubbr.tui.screens import FuzzyFindScreen, ReplacementScreen
 
 SAMPLE = "host box hw aa:bb:cc:dd:ee:ff up\npeer aa:bb:cc:dd:ee:ff again\n"
 
@@ -141,6 +141,72 @@ async def test_a_residual_is_listed_as_a_warn_row() -> None:
         assert status == "warn"
         assert reason == "known credential prefix"
         assert alias == ""
+
+
+async def test_r_offers_redacted_and_applies_it_everywhere() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        assert isinstance(app.screen, ReplacementScreen)
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        assert table.get_row_at(0)[4] == "[REDACTED]"
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.result.text.count("[REDACTED]") == 2
+    assert "aa:bb:cc:dd:ee:ff" not in outcome.result.text
+    key = decision_key(Kind.MAC, "aa:bb:cc:dd:ee:ff")
+    assert outcome.decisions.overrides == {key: "[REDACTED]"}
+
+
+async def test_a_custom_replacement_is_typed_and_applied() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("down", "down", "enter")
+        await pilot.pause()
+        await pilot.press(*"mylaptop")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.result.text.count("mylaptop") == 2
+    assert "aa:bb:cc:dd:ee:ff" not in outcome.result.text
+
+
+async def test_choosing_the_minted_alias_back_removes_the_override() -> None:
+    request = request_for(SAMPLE)
+    app = ReviewApp(request)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert isinstance(app.screen, ReplacementScreen)
+        assert app.screen.query_one(OptionList).highlighted == 1, "the active choice leads"
+        await pilot.press("up", "enter")
+        await pilot.pause()
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.decisions.overrides == {}
+    assert outcome.result.text == request.result.text, "the book must restore the minted alias"
+
+
+async def test_r_on_a_warn_row_does_nothing() -> None:
+    token = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    app = ReviewApp(request_for(f"tok {token} issued\n"))
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        assert not isinstance(app.screen, ReplacementScreen)
 
 
 async def test_space_on_a_warn_row_promotes_the_residual() -> None:

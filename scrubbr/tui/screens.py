@@ -4,9 +4,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList
+from textual.widgets import Input, OptionList, Static
 
+from scrubbr.report import clip
 from scrubbr.tui.fuzzy import options_for
+
+REDACTED_TEXT = "[REDACTED]"
+CUSTOM_LABEL = "custom…"
 
 
 class FuzzyFindScreen(ModalScreen[str | None]):
@@ -66,3 +70,79 @@ class FuzzyFindScreen(ModalScreen[str | None]):
         chooser.add_options([label for label, _ in options])
         if self._values:
             chooser.highlighted = 0
+
+
+class ReplacementScreen(ModalScreen[str | None]):
+    """Choose what a value is replaced with: its minted alias, [REDACTED], or free text.
+
+    Dismisses with the chosen replacement string, or None for no change. Choosing the
+    minted alias is how an override is undone; the caller compares and drops it.
+    """
+
+    DEFAULT_CSS = """
+    ReplacementScreen {
+        align: center middle;
+    }
+    #chooser {
+        width: 60%;
+        height: auto;
+        max-height: 80%;
+        background: $surface;
+        border: round $primary;
+        padding: 1;
+    }
+    #custom.hidden {
+        display: none;
+    }
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "cancel")]
+
+    def __init__(self, shown_text: str, default_alias: str, current: str | None) -> None:
+        super().__init__()
+        self._shown = shown_text
+        self._default = default_alias
+        self._current = current
+        self._values = [default_alias]
+        if default_alias != REDACTED_TEXT:
+            self._values.append(REDACTED_TEXT)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="chooser"):
+            yield Static(f"replace {clip(self._shown)} with:")
+            yield OptionList()
+            yield Input(placeholder="custom replacement", id="custom", classes="hidden")
+
+    def on_mount(self) -> None:
+        labels = [f"{clip(self._default)}  (minted alias)"]
+        if len(self._values) > 1:
+            labels.append(REDACTED_TEXT)
+        labels.append(CUSTOM_LABEL)
+        chooser = self.query_one(OptionList)
+        chooser.add_options(labels)
+        if self._current in self._values:
+            chooser.highlighted = self._values.index(self._current)
+        else:
+            chooser.highlighted = 0
+        if self._current is not None and self._current not in self._values:
+            self._reveal_custom(self._current)
+        chooser.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_index < len(self._values):
+            self.dismiss(self._values[event.option_index])
+        else:
+            self._reveal_custom(self._current or "")
+            self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        value = event.value.strip()
+        self.dismiss(value or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _reveal_custom(self, prefill: str) -> None:
+        custom = self.query_one(Input)
+        custom.value = prefill
+        custom.remove_class("hidden")
