@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
   `tty_stdio()` context manager for redirecting stdio to the review terminal, and an injectable
   `run_app` parameter on `main()` to route capable terminals to a full-screen review app.
   Added `--plain` flag to force line-mode review when a full-screen app is available.
+- Textual-based full-screen review app (`ReviewApp`) that displays findings in an
+  interactive DataTable, allowing users to keep or scrub individual values with live
+  re-scrubbing. Activated via the experimental `--tui` flag on capable terminals.
 
 ### Changed
 

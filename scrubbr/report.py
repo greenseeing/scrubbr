@@ -13,7 +13,7 @@ MIN_WIDTH = 40
 _GUTTER = "  "
 # StrEnum sorts alphabetically; declaration order is the sensitivity order, which is what
 # a security report should lead with.
-_KIND_ORDER = {kind: index for index, kind in enumerate(Kind)}
+KIND_ORDER = {kind: index for index, kind in enumerate(Kind)}
 
 
 def render_report(result: ScrubResult, verbose: bool, width: int) -> list[str]:
@@ -46,7 +46,7 @@ def _findings_table(findings: list[Finding], width: int) -> list[str]:
             (kind, _flatten(text), count, _flatten(alias))
             for (kind, text, alias), count in occurrences.items()
         ),
-        key=lambda row: (_KIND_ORDER[row[0]], -row[2], row[1]),
+        key=lambda row: (KIND_ORDER[row[0]], -row[2], row[1]),
     )
     kind_w = max(len("kind"), *(len(kind.value) for kind, _, _, _ in rows))
     count_w = max(len("count"), *(len(str(count)) for _, _, count, _ in rows))

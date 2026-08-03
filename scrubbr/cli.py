@@ -77,6 +77,11 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         help="review with the line-mode y/N prompt instead of the full-screen review",
     )
     parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="experimental: hold the review in a full-screen interface",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -165,6 +170,10 @@ def main(
             log.error("refusing to emit", reason="no terminal for review; pass -y to skip it")
             return 3
         try:
+            if run_app is None and args.tui:
+                from scrubbr.tui import run_review
+
+                run_app = run_review
             if run_app is not None and not args.plain and supports_tui(tty):
                 outcome = run_app(
                     ReviewRequest(text=text, result=result, identity=identity, book=book), tty

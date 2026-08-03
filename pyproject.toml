@@ -9,6 +9,7 @@ requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.9",
     "structlog>=24.4",
+    "textual>=8.2,<9",
 ]
 
 [project.scripts]
@@ -24,6 +25,7 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.7",
     "mypy>=1.13",
+    "pytest-asyncio>=1.4.0",
 ]
 
 [build-system]
@@ -52,3 +54,4 @@ warn_return_any = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

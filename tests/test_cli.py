@@ -1,7 +1,10 @@
 import io
 import json
 import os
+import select
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from importlib.metadata import version
 from pathlib import Path
@@ -352,15 +355,7 @@ def test_open_terminal_opens_a_non_seekable_dev_tty(monkeypatch: pytest.MonkeyPa
     terminal.close()
     os.close(replica)
     os.close(primary)
-def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(
-    no_dev_tty: None,
-    sample_file: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-    assert main([str(sample_file), "--no-identity"]) == 3
-    assert capsys.readouterr().out == ""
+
 
 def _approving_app(seen: list[ReviewRequest]) -> Any:
     def app(request: ReviewRequest, terminal: Terminal) -> ReviewOutcome:
@@ -506,6 +501,48 @@ def test_the_apps_amended_result_is_what_reaches_stdout(
     assert exit_code == 0
     assert capsys.readouterr().out == "amended output\n"
 
+
+def test_end_to_end_the_real_tui_runs_on_the_pty_and_stdout_stays_clean(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # No injected run_app: this drives the actual Textual app over a real pty, which is
+    # the closest a test can get to a terminal. The driver thread drains the rendering
+    # (a full pty buffer would deadlock the app) and answers y once it has painted.
+    monkeypatch.setenv("TERM", "xterm-256color")
+    primary, replica = os.openpty()
+    terminal = io.TextIOWrapper(io.FileIO(replica, "r+"), encoding="utf-8", line_buffering=True)
+    stop = threading.Event()
+
+    def drive() -> None:
+        rendered = b""
+        pressed = False
+        while not stop.is_set():
+            ready, _, _ = select.select([primary], [], [], 0.05)
+            if not ready:
+                continue
+            try:
+                rendered += os.read(primary, 65536)
+            except OSError:
+                return
+            if not pressed and rendered:
+                time.sleep(0.5)
+                os.write(primary, b"y")
+                pressed = True
+
+    driver = threading.Thread(target=drive, daemon=True)
+    driver.start()
+    try:
+        exit_code = main([str(sample_file), "--no-identity", "--tui"], open_tty=lambda: terminal)
+    finally:
+        stop.set()
+        driver.join(timeout=5)
+        os.close(primary)
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert out and "aa:bb:cc:dd:ee:ff" not in out
+    assert "\x1b" not in out, "no escape codes may reach the stdout pipe"
 
 
 def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(
