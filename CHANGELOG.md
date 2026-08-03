@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   reject, or modify individual findings after shape reclassification. Added `decision_key()`
   helper to construct unique keys for findings.
 - Keeping a labelled secret now un-promotes its bare occurrences to prevent inconsistent masking.
+- A decisions layer (Decisions/ReviewRequest/ReviewOutcome dataclasses) with apply_decisions()
+  to re-scrub with reviewer changes applied, routing new text through --also machinery while
+  maintaining alias stability via a shared AliasBook.
 
 ### Changed
 
