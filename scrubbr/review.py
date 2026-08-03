@@ -1,11 +1,16 @@
 import difflib
+import os
 import sys
-from collections.abc import Sequence
-from typing import Protocol
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from io import FileIO, TextIOWrapper
+from typing import Protocol, TypeGuard
 
 from scrubbr.kinds import Residual
 
 CONTEXT_LINES = 0
+DUMB_TERMS = frozenset({"", "dumb"})
+_STANDARD_FDS = (0, 1, 2)
 
 
 class NoTerminal(Exception):
@@ -20,6 +25,46 @@ class Terminal(Protocol):
     def readline(self) -> str: ...
 
     def close(self) -> None: ...
+
+
+class ScreenTerminal(Terminal, Protocol):
+    def fileno(self) -> int: ...
+
+
+def supports_tui(terminal: Terminal) -> TypeGuard[ScreenTerminal]:
+    """Whether this terminal can hold a full-screen review rather than a line prompt."""
+    if os.environ.get("TERM", "") in DUMB_TERMS:
+        return False
+    fileno = getattr(terminal, "fileno", None)
+    if fileno is None:
+        return False
+    try:
+        return os.isatty(fileno())
+    except (OSError, ValueError):
+        return False
+
+
+@contextmanager
+def tty_stdio(terminal: ScreenTerminal) -> Iterator[None]:
+    """Point fds 0-2 at the review terminal for the duration.
+
+    stdout is the pipe the scrubbed text must stay on and stdin may be a consumed one,
+    but a full-screen app reads keys from and renders on whichever standard fds its
+    driver picked. Swapping all three keeps the choice of driver irrelevant — and keeps
+    escape codes out of a redirected stderr.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    fd = terminal.fileno()
+    saved = {n: os.dup(n) for n in _STANDARD_FDS}
+    try:
+        for n in _STANDARD_FDS:
+            os.dup2(fd, n)
+        yield
+    finally:
+        for n, kept in saved.items():
+            os.dup2(kept, n)
+            os.close(kept)
 
 
 class _StdioTerminal:
@@ -41,7 +86,10 @@ class _StdioTerminal:
 def open_terminal() -> Terminal:
     """The interactive review's terminal: /dev/tty, so stdio stays free for the pipe."""
     try:
-        return open("/dev/tty", "r+", encoding="utf-8")
+        # Not open(): update mode wraps the fd in BufferedRandom, which refuses any
+        # non-seekable file -- and every pty replica is one, so on a real terminal the
+        # plain open() always fell through to the stdio fallback.
+        return TextIOWrapper(FileIO("/dev/tty", "r+"), encoding="utf-8", line_buffering=True)
     except OSError as error:
         # Sandboxed and non-Unix terminals can lack the device while stdin and stderr
         # are still real terminals. A human is present, so the review can run on stdio;
@@ -71,13 +119,13 @@ def confirm(
     return answer in {"y", "yes"}
 
 
-def _render_diff(original: str, scrubbed: str) -> str:
+def _render_diff(original: str, scrubbed: str, context: int = CONTEXT_LINES) -> str:
     lines = difflib.unified_diff(
         original.splitlines(),
         scrubbed.splitlines(),
         fromfile="original",
         tofile="scrubbed",
-        n=CONTEXT_LINES,
+        n=context,
         lineterm="",
     )
     return "\n".join(lines)

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `open_terminal()` now successfully opens `/dev/tty` on real terminals: bypasses the seek probe that fails on ptys by using `TextIOWrapper(FileIO(...))` instead of plain `open()`.
+
 ### Added
 
 - `scrub()` accepts keyword-only `keep` and `overrides` parameters to allow callers to accept,

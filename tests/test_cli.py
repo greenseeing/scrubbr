@@ -1,6 +1,8 @@
-import builtins
+import io
 import json
+import os
 import sys
+from collections.abc import Iterator
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Never
@@ -8,8 +10,9 @@ from typing import Any, Never
 import pytest
 
 from scrubbr.cli import _stderr_width, main
-from scrubbr.review import NoTerminal, confirm
-from scrubbr.scrub import scrub
+from scrubbr.decisions import Decisions, ReviewOutcome, ReviewRequest
+from scrubbr.review import NoTerminal, Terminal, confirm, open_terminal, supports_tui, tty_stdio
+from scrubbr.scrub import ScrubResult, scrub
 
 SAMPLE = "host box hw aa:bb:cc:dd:ee:ff up\n"
 
@@ -59,14 +62,12 @@ class FakeStdin:
 
 @pytest.fixture
 def no_dev_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    real_open = builtins.open
-
-    def fake_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+    def fake_fileio(file: Any, *args: Any, **kwargs: Any) -> Any:
         if file == "/dev/tty":
             raise OSError("no such device")
-        return real_open(file, *args, **kwargs)
+        return io.FileIO(file, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr("scrubbr.review.FileIO", fake_fileio)
 
 
 def test_scrubbed_text_goes_to_stdout_and_the_report_to_stderr(
@@ -320,6 +321,37 @@ def test_without_dev_tty_but_with_an_interactive_shell_declining_emits_nothing(
     assert capsys.readouterr().out == ""
 
 
+@pytest.fixture
+def pty_terminal() -> Iterator[tuple[int, io.TextIOWrapper]]:
+    # The same construction open_terminal uses: a pty replica is a tty but not seekable,
+    # so plain open(fd, "r+") refuses it.
+    primary, replica = os.openpty()
+    terminal = io.TextIOWrapper(io.FileIO(replica, "r+"), encoding="utf-8", line_buffering=True)
+    yield primary, terminal
+    if not terminal.closed:
+        terminal.close()
+    os.close(primary)
+
+
+def test_open_terminal_opens_a_non_seekable_dev_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every terminal emulator's /dev/tty resolves to a pty replica, which lseek refuses;
+    # the review terminal used to fall through to the stdio fallback on every real run.
+    primary, replica = os.openpty()
+
+    def dev_tty_fileio(file: Any, *args: Any, **kwargs: Any) -> Any:
+        assert file == "/dev/tty"
+        return io.FileIO(replica, "r+", closefd=False)
+
+    monkeypatch.setattr("scrubbr.review.FileIO", dev_tty_fileio)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    terminal = open_terminal()
+    assert supports_tui(terminal) is True
+    terminal.write("hi\n")
+    terminal.flush()
+    assert os.read(primary, 8) == b"hi\r\n"
+    terminal.close()
+    os.close(replica)
+    os.close(primary)
 def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(
     no_dev_tty: None,
     sample_file: Path,
