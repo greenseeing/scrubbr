@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format follows
 - A decisions layer (Decisions/ReviewRequest/ReviewOutcome dataclasses) with apply_decisions()
   to re-scrub with reviewer changes applied, routing new text through --also machinery while
   maintaining alias stability via a shared AliasBook.
+- Full-screen review app infrastructure: `ScreenTerminal` protocol, `supports_tui()` TypeGuard,
+  `tty_stdio()` context manager for redirecting stdio to the review terminal, and an injectable
+  `run_app` parameter on `main()` to route capable terminals to a full-screen review app.
+  Added `--plain` flag to force line-mode review when a full-screen app is available.
 
 ### Changed
 

@@ -361,3 +361,159 @@ def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     assert main([str(sample_file), "--no-identity"]) == 3
     assert capsys.readouterr().out == ""
+
+def _approving_app(seen: list[ReviewRequest]) -> Any:
+    def app(request: ReviewRequest, terminal: Terminal) -> ReviewOutcome:
+        seen.append(request)
+        return ReviewOutcome(confirmed=True, result=request.result, decisions=Decisions())
+
+    return app
+
+
+def test_supports_tui_wants_a_real_screen_terminal(
+    monkeypatch: pytest.MonkeyPatch, pty_terminal: tuple[int, io.TextIOWrapper]
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+    assert supports_tui(terminal) is True
+    assert supports_tui(FakeTerminal("y\n")) is False
+    monkeypatch.setenv("TERM", "dumb")
+    assert supports_tui(terminal) is False
+
+
+def test_tty_stdio_points_the_standard_fds_at_the_terminal_and_restores_them(
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    primary, terminal = pty_terminal
+    before = [os.fstat(fd) for fd in (0, 1, 2)]
+    with tty_stdio(terminal):
+        assert all(os.isatty(fd) for fd in (0, 1, 2))
+        os.write(1, b"one")
+        os.write(2, b"two")
+        assert os.read(primary, 6) == b"onetwo"
+    after = [os.fstat(fd) for fd in (0, 1, 2)]
+    keys = [(stat.st_dev, stat.st_ino) for stat in before]
+    assert [(stat.st_dev, stat.st_ino) for stat in after] == keys
+
+
+def test_a_capable_terminal_routes_the_review_to_the_full_screen_app(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity"],
+        open_tty=lambda: terminal,
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert seen and seen[0].text == SAMPLE
+    out = capsys.readouterr().out
+    assert out and "aa:bb:cc:dd:ee:ff" not in out
+
+
+def test_plain_forces_the_line_mode_review(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    primary, terminal = pty_terminal
+    os.write(primary, b"y\n")
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity", "--plain"],
+        open_tty=lambda: terminal,
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert not seen, "--plain must never reach the full-screen app"
+    assert capsys.readouterr().out
+
+
+def test_a_terminal_without_a_screen_takes_the_plain_path(
+    sample_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity"],
+        open_tty=lambda: FakeTerminal("y\n"),
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert not seen
+
+
+def test_a_dumb_terminal_takes_the_plain_path(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    monkeypatch.setenv("TERM", "dumb")
+    primary, terminal = pty_terminal
+    os.write(primary, b"y\n")
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity"],
+        open_tty=lambda: terminal,
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert not seen
+
+
+def test_a_declined_app_outcome_emits_nothing(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+
+    def declining(request: ReviewRequest, tty: Terminal) -> ReviewOutcome:
+        return ReviewOutcome(confirmed=False, result=request.result, decisions=Decisions())
+
+    exit_code = main(
+        [str(sample_file), "--no-identity"], open_tty=lambda: terminal, run_app=declining
+    )
+    assert exit_code == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_the_apps_amended_result_is_what_reaches_stdout(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+
+    def amending(request: ReviewRequest, tty: Terminal) -> ReviewOutcome:
+        amended = ScrubResult(text="amended output\n", findings=[], residuals=[], counts={})
+        return ReviewOutcome(confirmed=True, result=amended, decisions=Decisions())
+
+    exit_code = main(
+        [str(sample_file), "--no-identity"], open_tty=lambda: terminal, run_app=amending
+    )
+    assert exit_code == 0
+    assert capsys.readouterr().out == "amended output\n"
+
+
+
+def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(
+    no_dev_tty: None,
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert main([str(sample_file), "--no-identity"]) == 3
+    assert capsys.readouterr().out == ""

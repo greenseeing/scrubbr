@@ -12,10 +12,20 @@ from pathlib import Path
 import structlog
 
 from scrubbr.alias import AliasBook
+from scrubbr.decisions import ReviewOutcome, ReviewRequest
 from scrubbr.identity import LocalIdentity
 from scrubbr.report import clip, render_report
-from scrubbr.review import NoTerminal, Terminal, confirm, open_terminal
+from scrubbr.review import (
+    NoTerminal,
+    ScreenTerminal,
+    Terminal,
+    confirm,
+    open_terminal,
+    supports_tui,
+)
 from scrubbr.scrub import ScrubResult, scrub
+
+RunApp = Callable[[ReviewRequest, ScreenTerminal], ReviewOutcome]
 
 
 def _configure_logging() -> None:
@@ -60,6 +70,11 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         "--no-review",
         action="store_true",
         help="skip the interactive review",
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="review with the line-mode y/N prompt instead of the full-screen review",
     )
     parser.add_argument(
         "-v",
@@ -116,7 +131,11 @@ def _stderr_width() -> int:
         return shutil.get_terminal_size().columns
 
 
-def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_terminal) -> int:
+def main(
+    argv: list[str] | None = None,
+    open_tty: Callable[[], Terminal] = open_terminal,
+    run_app: RunApp | None = None,
+) -> int:
     args = _parse(argv)
     _configure_logging()
     log = structlog.get_logger()
@@ -146,7 +165,13 @@ def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_
             log.error("refusing to emit", reason="no terminal for review; pass -y to skip it")
             return 3
         try:
-            confirmed = confirm(text, result.text, result.residuals, tty)
+            if run_app is not None and not args.plain and supports_tui(tty):
+                outcome = run_app(
+                    ReviewRequest(text=text, result=result, identity=identity, book=book), tty
+                )
+                confirmed, result = outcome.confirmed, outcome.result
+            else:
+                confirmed = confirm(text, result.text, result.residuals, tty)
         finally:
             tty.close()
         if not confirmed:
