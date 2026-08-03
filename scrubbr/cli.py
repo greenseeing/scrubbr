@@ -11,6 +11,7 @@ from pathlib import Path
 
 import structlog
 
+from scrubbr.alias import AliasBook
 from scrubbr.identity import LocalIdentity
 from scrubbr.report import clip, render_report
 from scrubbr.review import NoTerminal, Terminal, confirm, open_terminal
@@ -127,7 +128,9 @@ def main(argv: list[str] | None = None, open_tty: Callable[[], Terminal] = open_
     text = args.infile.read()
     base = LocalIdentity() if args.no_identity else LocalIdentity.local()
     identity = replace(base, extra=base.extra + tuple(args.also))
-    result = scrub(text, identity)
+    # One book for the whole run, so an interactive recompute can never re-mint aliases.
+    book = AliasBook()
+    result = scrub(text, identity, book)
     _report(log, result, args.verbose)
 
     if args.strict and result.residuals:

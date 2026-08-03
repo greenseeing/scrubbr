@@ -1,5 +1,7 @@
 import ipaddress
 from collections import Counter
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +24,14 @@ NO_IDENTITY = LocalIdentity()
 MIN_UNRESOLVED_GROUPS = 6
 MANUAL_IID_MAX = 0xFFFF
 
+_NO_KEEP: frozenset[tuple[Kind, str]] = frozenset()
+_NO_OVERRIDES: Mapping[tuple[Kind, str], str] = MappingProxyType({})
+
+
+def decision_key(kind: Kind, text: str) -> tuple[Kind, str]:
+    """One key per distinct value — the same case-insensitive identity _distinct uses."""
+    return (kind, text.lower())
+
 
 class ScrubResult(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -33,19 +43,28 @@ class ScrubResult(BaseModel):
 
 
 def scrub(
-    text: str, identity: LocalIdentity = NO_IDENTITY, book: AliasBook | None = None
+    text: str,
+    identity: LocalIdentity = NO_IDENTITY,
+    book: AliasBook | None = None,
+    *,
+    keep: frozenset[tuple[Kind, str]] = _NO_KEEP,
+    overrides: Mapping[tuple[Kind, str], str] = _NO_OVERRIDES,
 ) -> ScrubResult:
     if book is None:
         book = AliasBook()
-    findings, replacements, unresolved = _sweep(text, identity, (), book)
+    findings, replacements, unresolved = _sweep(text, identity, (), book, keep, overrides)
 
     # A value found behind a keyword has to be scrubbed everywhere else it appears too,
     # or `psk=hunter2` is rewritten while the bare `hunter2` two lines down survives.
+    # Deriving this from the kept-filtered findings is what makes keeping a labelled
+    # secret also un-promote its bare occurrences.
     promoted = tuple(
         {(f.text, f.kind) for f in findings if f.kind in {Kind.SECRET_VALUE, Kind.SSID}}
     )
     if promoted:
-        findings, replacements, unresolved = _sweep(text, identity, promoted, book)
+        findings, replacements, unresolved = _sweep(
+            text, identity, promoted, book, keep, overrides
+        )
 
     out, written = _splice(text, replacements)
     counts = Counter(finding.kind for finding in _distinct(findings))
@@ -62,6 +81,8 @@ def _sweep(
     identity: LocalIdentity,
     promoted: tuple[tuple[str, Kind], ...],
     book: AliasBook,
+    keep: frozenset[tuple[Kind, str]],
+    overrides: Mapping[tuple[Kind, str], str],
 ) -> tuple[list[Finding], list[tuple[int, int, str]], list[str]]:
     findings: list[Finding] = []
     replacements: list[tuple[int, int, str]] = []
@@ -77,7 +98,10 @@ def _sweep(
             if match.text.count(":") + 1 >= MIN_UNRESOLVED_GROUPS:
                 unresolved.append(match.text)
             continue
-        replacement = _replacement(kind, match.text, book, match.forced)
+        key = decision_key(kind, match.text)
+        if key in keep:
+            continue
+        replacement = overrides.get(key) or _replacement(kind, match.text, book, match.forced)
         if replacement is None:
             continue
         findings.append(

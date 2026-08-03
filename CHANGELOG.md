@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `scrub()` accepts keyword-only `keep` and `overrides` parameters to allow callers to accept,
+  reject, or modify individual findings after shape reclassification. Added `decision_key()`
+  helper to construct unique keys for findings.
+- Keeping a labelled secret now un-promotes its bare occurrences to prevent inconsistent masking.
+
+### Changed
+
+- `main()` now creates a single `AliasBook` per run and passes it to `scrub()`, ensuring
+  interactive recomputes never mint new aliases for existing findings.
+
+
 ## [0.2.0] - 2026-07-31
 
 First release published to PyPI. Earlier copies installed from git also called themselves `0.1.0`

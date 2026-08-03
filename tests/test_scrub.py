@@ -432,6 +432,76 @@ class TestReviewRegressions:
         assert not [r for r in result.residuals if r.text.startswith("22:20")]
 
 
+class TestReviewDecisions:
+    def test_a_kept_value_survives_at_every_occurrence(self) -> None:
+        text = "a aa:bb:cc:dd:ee:ff b aa:bb:cc:dd:ee:ff"
+        assert scrub(text, keep=frozenset({(Kind.MAC, "aa:bb:cc:dd:ee:ff")})).text == text
+
+    def test_keep_is_case_insensitive(self) -> None:
+        text = "hw AA:BB:CC:DD:EE:FF up"
+        assert scrub(text, keep=frozenset({(Kind.MAC, "aa:bb:cc:dd:ee:ff")})).text == text
+
+    def test_keeping_one_value_does_not_keep_its_neighbours(self) -> None:
+        out = scrub(
+            "aa:bb:cc:dd:ee:ff and 11:22:33:44:55:66",
+            keep=frozenset({(Kind.MAC, "aa:bb:cc:dd:ee:ff")}),
+        ).text
+        assert "aa:bb:cc:dd:ee:ff" in out
+        assert "11:22:33:44:55:66" not in out
+
+    def test_a_kept_value_leaves_no_finding_and_no_count(self) -> None:
+        result = scrub("hw aa:bb:cc:dd:ee:ff", keep=frozenset({(Kind.MAC, "aa:bb:cc:dd:ee:ff")}))
+        assert result.findings == []
+        assert result.counts == {}
+
+    def test_keeping_a_labelled_secret_also_unpromotes_its_bare_occurrences(self) -> None:
+        text = "password=hunter2fortress\nlogin failed for hunter2fortress\n"
+        out = scrub(text, keep=frozenset({(Kind.SECRET_VALUE, "hunter2fortress")})).text
+        assert out == text
+
+    def test_an_override_replaces_the_value_at_every_occurrence(self) -> None:
+        out = scrub(
+            "a aa:bb:cc:dd:ee:ff b aa:bb:cc:dd:ee:ff",
+            overrides={(Kind.MAC, "aa:bb:cc:dd:ee:ff"): "[MAC]"},
+        ).text
+        assert out == "a [MAC] b [MAC]"
+
+    def test_an_override_becomes_the_finding_alias(self) -> None:
+        result = scrub(
+            "hw aa:bb:cc:dd:ee:ff", overrides={(Kind.MAC, "aa:bb:cc:dd:ee:ff"): "[MAC]"}
+        )
+        assert [f.alias for f in result.findings] == ["[MAC]"]
+
+    def test_an_override_leaves_other_values_on_their_minted_aliases(self) -> None:
+        out = scrub(
+            "aa:bb:cc:dd:ee:ff and 11:22:33:44:55:66",
+            overrides={(Kind.MAC, "aa:bb:cc:dd:ee:ff"): "[MAC]"},
+        ).text
+        assert "[MAC]" in out
+        assert "11:22:33:44:55:66" not in out
+        assert re.search(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", out)
+
+    def test_a_kept_secret_reappears_in_the_residual_warning(self) -> None:
+        # Keeping a finding must not silence the safety net: the value goes back to
+        # looking like an unscrubbed token, and the reader should be told so.
+        value = "9f2a1c7b4e6d8a0f3c5b7d9e1a2f4c6b8d0e2a4c6b8d0f1e3a5c7b9d0e2f4a6c"
+        result = scrub(f"psk = {value}\n", keep=frozenset({(Kind.HEX, value)}))
+        assert result.text == f"psk = {value}\n"
+        assert any(r.text == value for r in result.residuals)
+
+    def test_empty_decisions_change_nothing(self) -> None:
+        identity = LocalIdentity(hostname="dev-thinkpad", username="dev")
+        base = scrub(JOURNAL, identity, book=AliasBook(random.Random(7)))
+        decided = scrub(
+            JOURNAL,
+            identity,
+            book=AliasBook(random.Random(7)),
+            keep=frozenset(),
+            overrides={},
+        )
+        assert decided.text == base.text
+
+
 class TestCounts:
     def test_counts_are_reported_per_kind(self) -> None:
         result = scrub(JOURNAL, identity=LocalIdentity(hostname="dev-thinkpad", username="dev"))
