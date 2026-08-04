@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-04
+
+Interactive runs now end in a file next to the input instead of a terminal full of
+scrubbed text; pipes, redirections and `-o` are unchanged.
+
 ### Added
 
 - When standard output is an interactive terminal and no `-o` is given, the cleaned text
@@ -86,6 +91,7 @@ while missing most of the options below, so that version number was retired rath
 - Width-aware tables for the stderr report when running on a terminal, JSON log lines otherwise.
 - Fallback to a stdio-backed terminal when `/dev/tty` cannot be opened.
 
-[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/greenseeing/scrubbr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/greenseeing/scrubbr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/greenseeing/scrubbr/releases/tag/v0.2.0

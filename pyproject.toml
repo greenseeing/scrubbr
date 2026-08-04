@@ -1,6 +1,6 @@
 [project]
 name = "scrubbr"
-version = "0.3.0"
+version = "0.4.0"
 description = "Sanitize Linux diagnostics before pasting them into an LLM"
 readme = "README.md"
 license = "MIT"
