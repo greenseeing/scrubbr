@@ -101,7 +101,12 @@ def open_terminal() -> Terminal:
 
 
 def confirm(
-    original: str, scrubbed: str, residuals: Sequence[Residual], terminal: Terminal
+    original: str,
+    scrubbed: str,
+    residuals: Sequence[Residual],
+    terminal: Terminal,
+    *,
+    destination: str | None = None,
 ) -> bool:
     """Show the change on the given terminal and wait for a decision.
 
@@ -113,7 +118,10 @@ def confirm(
     warning = render_residuals(residuals)
     if warning:
         terminal.write(f"\n{warning}\n")
-    terminal.write("\nemit scrubbed text? [y/N] ")
+    question = (
+        "emit scrubbed text" if destination is None else f"write scrubbed text to {destination}"
+    )
+    terminal.write(f"\n{question}? [y/N] ")
     terminal.flush()
     answer = terminal.readline().strip().lower()
     return answer in {"y", "yes"}

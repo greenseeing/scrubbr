@@ -131,6 +131,17 @@ def _stderr_width() -> int:
         return shutil.get_terminal_size().columns
 
 
+def _derived_output(source: str | None) -> str:
+    """The default output path next to the input: demo.txt -> demo.scrubbed.txt."""
+    # argparse.FileType names stdin "<stdin>" when the infile argument is "-".
+    if source is None or source == "<stdin>":
+        return "scrubbed.txt"
+    path = Path(source)
+    if path.suffix:
+        return str(path.with_suffix(f".scrubbed{path.suffix}"))
+    return str(path.with_name(path.name + ".scrubbed"))
+
+
 def main(
     argv: list[str] | None = None,
     open_tty: Callable[[], Terminal] = open_terminal,
@@ -140,6 +151,7 @@ def main(
     _configure_logging()
     log = structlog.get_logger()
 
+    source = args.infile.name if args.infile is not None else None
     if args.infile is None:
         if isinstance(sys.stdin, io.TextIOWrapper):
             sys.stdin.reconfigure(errors="replace")
@@ -156,6 +168,12 @@ def main(
         log.error("refusing to emit", reason="strict mode with unscrubbed strings")
         return 2
 
+    # Decided before the review: tty_stdio later points fd 1 at the review terminal, and
+    # the TUI needs the derived default in its request up front.
+    destination = args.output
+    if destination is None and sys.stdout.isatty():
+        destination = _derived_output(source)
+
     if not args.no_review:
         try:
             tty = open_tty()
@@ -171,9 +189,19 @@ def main(
 
                     run_app = run_review
                 outcome = run_app(
-                    ReviewRequest(text=text, result=result, identity=identity, book=book), tty
+                    ReviewRequest(
+                        text=text,
+                        result=result,
+                        identity=identity,
+                        book=book,
+                        # Only the terminal-dump default is up for editing; -o was explicit.
+                        default_output=destination if args.output is None else None,
+                    ),
+                    tty,
                 )
                 confirmed, result = outcome.confirmed, outcome.result
+                if outcome.destination is not None:
+                    destination = outcome.destination
                 amended = outcome.decisions
                 if confirmed and (amended.keep or amended.additions or amended.overrides):
                     log.info(
@@ -183,22 +211,24 @@ def main(
                         replaced=len(amended.overrides),
                     )
             else:
-                confirmed = confirm(text, result.text, result.residuals, tty)
+                confirmed = confirm(
+                    text, result.text, result.residuals, tty, destination=destination
+                )
         finally:
             tty.close()
         if not confirmed:
             log.error("discarded", reason="not confirmed at review")
             return 1
 
-    if args.output is not None:
+    if destination is not None:
         try:
             # Opened only after the review passes: opening at parse time would leave an
             # empty or truncated file behind on every refused run.
-            Path(args.output).write_text(result.text, encoding="utf-8")
+            Path(destination).write_text(result.text, encoding="utf-8")
         except OSError as error:
-            log.error("could not write", path=args.output, error=str(error))
+            log.error("could not write", path=destination, error=str(error))
             return 4
-        log.info("written", path=args.output)
+        log.info("written", path=destination)
     else:
         sys.stdout.write(result.text)
     return 0

@@ -2,7 +2,7 @@ import random
 from typing import Any
 
 from textual.pilot import Pilot
-from textual.widgets import DataTable, OptionList
+from textual.widgets import DataTable, Input, OptionList
 
 from scrubbr import AliasBook, Kind, LocalIdentity
 from scrubbr.decisions import ReviewRequest
@@ -13,11 +13,15 @@ from scrubbr.tui.screens import DiffScreen, FuzzyFindScreen, ReplacementScreen
 SAMPLE = "host box hw aa:bb:cc:dd:ee:ff up\npeer aa:bb:cc:dd:ee:ff again\n"
 
 
-def request_for(text: str) -> ReviewRequest:
+def request_for(text: str, default_output: str | None = None) -> ReviewRequest:
     identity = LocalIdentity()
     book = AliasBook(random.Random(0))
     return ReviewRequest(
-        text=text, result=scrub(text, identity, book), identity=identity, book=book
+        text=text,
+        result=scrub(text, identity, book),
+        identity=identity,
+        book=book,
+        default_output=default_output,
     )
 
 
@@ -113,6 +117,107 @@ async def test_y_shows_the_diff_before_emitting() -> None:
     outcome = app.return_value
     assert outcome is not None
     assert outcome.confirmed is True
+
+
+async def test_the_diff_shows_the_prefilled_destination() -> None:
+    app = ReviewApp(request_for(SAMPLE, default_output="demo.scrubbed.txt"))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        assert app.screen.query_one("#destination", Input).value == "demo.scrubbed.txt"
+
+
+async def test_the_diff_has_no_destination_field_without_a_default() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        assert not app.screen.query("#destination")
+
+
+async def test_accepting_returns_the_default_destination() -> None:
+    app = ReviewApp(request_for(SAMPLE, default_output="demo.scrubbed.txt"))
+    async with app.run_test() as pilot:
+        await emit(pilot)
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.confirmed is True
+    assert outcome.destination == "demo.scrubbed.txt"
+
+
+async def test_accepting_without_a_default_returns_no_destination() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await emit(pilot)
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.destination is None
+
+
+async def test_editing_the_destination_changes_where_the_text_goes() -> None:
+    app = ReviewApp(request_for(SAMPLE, default_output="demo.scrubbed.txt"))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.press("end", *".bak")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.destination == "demo.scrubbed.txt.bak"
+
+
+async def test_y_types_into_the_destination_while_editing() -> None:
+    app = ReviewApp(request_for(SAMPLE, default_output="demo.scrubbed.txt"))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.press("end", "y")
+        await pilot.pause()
+        assert app.return_value is None, "keys must edit the path, not confirm"
+        assert app.screen.query_one("#destination", Input).value == "demo.scrubbed.txty"
+
+
+async def test_escape_while_editing_leaves_the_field_not_the_diff() -> None:
+    app = ReviewApp(request_for(SAMPLE, default_output="demo.scrubbed.txt"))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.press("end", *".bak")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, DiffScreen), "escape must only blur the field"
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.destination == "demo.scrubbed.txt.bak"
+
+
+async def test_the_edit_path_key_is_not_offered_without_a_destination() -> None:
+    app = ReviewApp(request_for(SAMPLE))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        assert app.screen.check_action("edit_path", ()) is False
+
+
+async def test_an_emptied_destination_falls_back_to_the_default() -> None:
+    app = ReviewApp(request_for(SAMPLE, default_output="demo.scrubbed.txt"))
+    async with app.run_test() as pilot:
+        await pilot.press("y")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.press("end", "ctrl+u")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("y")
+    outcome = app.return_value
+    assert outcome is not None
+    assert outcome.destination == "demo.scrubbed.txt"
 
 
 async def test_escape_at_the_diff_returns_to_the_table() -> None:

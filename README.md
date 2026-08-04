@@ -53,16 +53,23 @@ uv tool install --force git+https://github.com/greenseeing/scrubbr
 
 ### Clean up a log file
 
-Say a program wrote a log you want to share. Point scrubbr at the file and tell it where
-to save the cleaned copy with `-o`:
+Say a program wrote a log you want to share. Point scrubbr at the file:
+
+```
+scrubbr boot-log.txt
+```
+
+scrubbr shows you a review of every change it wants to make (see below). Once you approve,
+the safe copy lands in `boot-log.scrubbed.txt` next to the original, ready to attach or
+paste — the review screen shows the destination and lets you change it, or pick your own
+up front with `-o`:
 
 ```
 scrubbr boot-log.txt -o boot-log.clean.txt
 ```
 
-scrubbr shows you a review of every change it wants to make (see below). Once you approve,
-the safe copy lands in `boot-log.clean.txt`, ready to attach or paste. Your original file
-is never modified.
+Your original file is never modified. If the destination file already exists, it is
+overwritten.
 
 ### Clean up a command's output
 
@@ -87,8 +94,10 @@ journalctl -u NetworkManager -n 200 | scrubbr | wl-copy
 
 (`wl-copy` is for Wayland desktops; on X11 use `xclip -selection clipboard`.)
 
-Without `-o`, scrubbr prints the cleaned text to standard output — the terminal, or
-whatever you pipe it into. The report of what was changed always goes to the screen
+Without `-o`, scrubbr prints the cleaned text to standard output whenever that output is
+a pipe or a redirection. When standard output is your terminal, it writes a file instead —
+`NAME.scrubbed.EXT` next to the input (`scrubbed.txt` for piped input) — so the cleaned
+text never floods your screen. The report of what was changed always goes to the screen
 separately (stderr), so it never mixes into the cleaned text. If you redirect stderr too
 (so it isn't a terminal), the report switches to JSON lines — one event per line — so
 scripts can parse it.
@@ -106,7 +115,11 @@ recognise well enough to rewrite is listed too, as a `warn` row. From there:
 | `a` | scrub additional text — type to fuzzy-find any token from the input, or enter an exact string |
 | `r` | choose the selected value's replacement: the minted alias, `[REDACTED]`, or something you type |
 | `y` | show the full diff; `y` again emits, `Escape` goes back to the table |
+| `e` | on the diff — edit the destination path shown at the top; `Enter` returns to the diff |
 | `q` | abort — nothing is printed and no file is written |
+
+When the cleaned text is headed for a file rather than a pipe, the diff screen shows the
+destination path at the top; press `e` to change it before confirming.
 
 Every change re-runs the scrubber, so a value you keep is restored at every occurrence
 and text you add is replaced at every occurrence, with the report and warnings kept
@@ -116,17 +129,18 @@ With `--plain` — or on a terminal too limited for the full screen — you get 
 prompt instead: the diff, the warning list, and one question:
 
 ```
-emit scrubbed text? [y/N]
+write scrubbed text to boot-log.scrubbed.txt? [y/N]
 ```
 
-Type `y` to approve. Anything else (including just pressing Enter) discards the output.
+(or `emit scrubbed text? [y/N]` when the output is going to a pipe). Type `y` to approve.
+Anything else (including just pressing Enter) discards the output.
 If you trust a run and want to skip the review entirely, pass `-y`.
 
 ### Options
 
 | Option | What it does |
 |---|---|
-| `-o FILE`, `--output FILE` | save the cleaned text to `FILE` instead of printing it |
+| `-o FILE`, `--output FILE` | save the cleaned text to `FILE` — overrides both stdout and the derived `NAME.scrubbed.EXT` default |
 | `-y`, `--no-review` | skip the interactive review |
 | `--plain` | review with the classic y/N prompt instead of the full-screen interface |
 | `-v`, `--verbose` | list every replaced value: what it was, how often it occurred, what it became |
@@ -227,14 +241,15 @@ For scripts and the curious:
 | 1 | you declined at the review |
 | 2 | refused under `--strict` because suspicious strings remained |
 | 3 | refused because there was no terminal to review on — pass `-y` to skip review |
-| 4 | the output file given with `-o` could not be written |
+| 4 | the output file could not be written |
 
 For the review, scrubbr opens the controlling terminal (`/dev/tty`) so pipes stay free;
 where that device doesn't exist it falls back to your terminal's own input and output, as
 long as both are genuinely interactive. Exit 3 only happens when neither is available —
 and it exists because the alternative is worse: emitting unreviewed text exactly when the
 safety gate could not run. Skipping the review should be your decision, not a fallback.
-On any refusal, `-o` writes nothing — the output file is only created after you approve.
+On any refusal, no output file is written — whether named with `-o` or derived — because
+the file is only created after you approve.
 
 ## Releasing
 

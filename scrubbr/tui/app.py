@@ -11,7 +11,7 @@ from scrubbr.kinds import Finding, Kind, Residual
 from scrubbr.report import KIND_ORDER, clip
 from scrubbr.scrub import decision_key
 from scrubbr.tui.fuzzy import candidates
-from scrubbr.tui.screens import DiffScreen, FuzzyFindScreen, ReplacementScreen
+from scrubbr.tui.screens import DiffScreen, DiffVerdict, FuzzyFindScreen, ReplacementScreen
 
 # A row stands for a finding (its decision key) or for a residual (its bare text).
 RowRef = tuple[Kind, str] | str
@@ -176,14 +176,25 @@ class ReviewApp(App[ReviewOutcome]):
         self._recompute()
 
     def action_accept(self) -> None:
-        def verdict(confirmed: bool | None) -> None:
-            if confirmed:
+        def verdict(v: DiffVerdict | None) -> None:
+            if v is not None and v.confirmed:
                 self.exit(
-                    ReviewOutcome(confirmed=True, result=self._result, decisions=self._decisions)
+                    ReviewOutcome(
+                        confirmed=True,
+                        result=self._result,
+                        decisions=self._decisions,
+                        destination=v.destination,
+                    )
                 )
 
         self.push_screen(
-            DiffScreen(self._request.text, self._result.text, self._result.residuals), verdict
+            DiffScreen(
+                self._request.text,
+                self._result.text,
+                self._result.residuals,
+                destination=self._request.default_output,
+            ),
+            verdict,
         )
 
     def action_abort(self) -> None:

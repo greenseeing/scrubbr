@@ -12,7 +12,7 @@ from typing import Any, Never
 
 import pytest
 
-from scrubbr.cli import _stderr_width, main
+from scrubbr.cli import _derived_output, _stderr_width, main
 from scrubbr.decisions import Decisions, ReviewOutcome, ReviewRequest
 from scrubbr.review import NoTerminal, Terminal, confirm, open_terminal, supports_tui, tty_stdio
 from scrubbr.scrub import ScrubResult, scrub
@@ -221,6 +221,17 @@ def test_confirm_prompts_on_the_terminal_and_honours_the_answer() -> None:
     assert confirm(SAMPLE, result.text, result.residuals, terminal) is True
     assert "emit scrubbed text?" in terminal.shown
     assert "aa:bb:cc:dd:ee:ff" in terminal.shown, "the review must show what is replaced"
+
+
+def test_confirm_names_the_destination_when_one_is_set() -> None:
+    terminal = FakeTerminal("y\n")
+    result = scrub(SAMPLE)
+    assert (
+        confirm(SAMPLE, result.text, result.residuals, terminal, destination="log.scrubbed.txt")
+        is True
+    )
+    assert "write scrubbed text to log.scrubbed.txt?" in terminal.shown
+    assert "emit scrubbed text?" not in terminal.shown
 
 
 def test_confirm_treats_anything_but_yes_as_no() -> None:
@@ -546,6 +557,177 @@ def test_end_to_end_the_real_tui_runs_on_the_pty_and_stdout_stays_clean(
     out = capsys.readouterr().out
     assert out and "aa:bb:cc:dd:ee:ff" not in out
     assert "\x1b" not in out, "no escape codes may reach the stdout pipe"
+
+
+@pytest.mark.parametrize(
+    ("source", "derived"),
+    [
+        (None, "scrubbed.txt"),
+        ("<stdin>", "scrubbed.txt"),
+        ("demo.txt", "demo.scrubbed.txt"),
+        ("archive.tar.gz", "archive.tar.scrubbed.gz"),
+        ("logs/demo.txt", "logs/demo.scrubbed.txt"),
+        ("demo", "demo.scrubbed"),
+        (".env", ".env.scrubbed"),
+    ],
+)
+def test_the_derived_output_lands_next_to_the_input(source: str | None, derived: str) -> None:
+    assert _derived_output(source) == derived
+
+
+def _tty_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Patched inside the test body: capsys swaps in a fresh stdout object between fixture
+    # setup and the call phase, so a fixture would patch an object main() never sees.
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+
+def test_a_terminal_stdout_gets_the_derived_file_instead_of_the_dump(
+    sample_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _tty_stdout(monkeypatch)
+    assert main([str(sample_file), "-y", "--no-identity"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "", "an interactive terminal must never receive the dump"
+    written = (tmp_path / "log.scrubbed.txt").read_text(encoding="utf-8")
+    assert "aa:bb:cc:dd:ee:ff" not in written
+    assert "written" in captured.err
+
+
+def test_a_terminal_stdout_with_plain_review_prompts_for_the_derived_file(
+    sample_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _tty_stdout(monkeypatch)
+    terminal = FakeTerminal("y\n")
+    assert main([str(sample_file), "--no-identity"], open_tty=lambda: terminal) == 0
+    assert f"write scrubbed text to {tmp_path / 'log.scrubbed.txt'}?" in terminal.shown
+    assert capsys.readouterr().out == ""
+    assert (tmp_path / "log.scrubbed.txt").exists()
+
+
+def test_declining_the_plain_review_on_a_terminal_leaves_no_file_behind(
+    sample_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _tty_stdout(monkeypatch)
+    assert main([str(sample_file), "--no-identity"], open_tty=lambda: FakeTerminal("n\n")) == 1
+    assert capsys.readouterr().out == ""
+    assert not (tmp_path / "log.scrubbed.txt").exists()
+
+
+def test_the_full_screen_review_is_offered_the_derived_default(
+    sample_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    _tty_stdout(monkeypatch)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity"],
+        open_tty=lambda: terminal,
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert seen[0].default_output == str(tmp_path / "log.scrubbed.txt")
+    assert capsys.readouterr().out == ""
+    assert (tmp_path / "log.scrubbed.txt").exists()
+
+
+def test_the_destination_picked_in_the_review_wins(
+    sample_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    _tty_stdout(monkeypatch)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+    picked = tmp_path / "picked.txt"
+
+    def picking(request: ReviewRequest, tty: Terminal) -> ReviewOutcome:
+        return ReviewOutcome(
+            confirmed=True,
+            result=request.result,
+            decisions=Decisions(),
+            destination=str(picked),
+        )
+
+    exit_code = main(
+        [str(sample_file), "--no-identity"], open_tty=lambda: terminal, run_app=picking
+    )
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+    assert "aa:bb:cc:dd:ee:ff" not in picked.read_text(encoding="utf-8")
+    assert not (tmp_path / "log.scrubbed.txt").exists()
+
+
+def test_an_explicit_output_option_bypasses_the_review_field(
+    sample_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    _tty_stdout(monkeypatch)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+    out_path = tmp_path / "out.txt"
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity", "-o", str(out_path)],
+        open_tty=lambda: terminal,
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert seen[0].default_output is None, "-o was explicit; the field must not offer it"
+    assert out_path.exists()
+
+
+def test_a_piped_stdout_is_offered_no_default_and_still_gets_the_text(
+    sample_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pty_terminal: tuple[int, io.TextIOWrapper],
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    _, terminal = pty_terminal
+    seen: list[ReviewRequest] = []
+    exit_code = main(
+        [str(sample_file), "--no-identity"],
+        open_tty=lambda: terminal,
+        run_app=_approving_app(seen),
+    )
+    assert exit_code == 0
+    assert seen[0].default_output is None
+    assert capsys.readouterr().out, "a pipe must still receive the scrubbed text"
+
+
+def test_an_unwritable_derived_path_returns_four_and_emits_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _tty_stdout(monkeypatch)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    path = locked / "log.txt"
+    path.write_text(SAMPLE, encoding="utf-8")
+    locked.chmod(0o555)
+    try:
+        assert main([str(path), "-y", "--no-identity"]) == 4
+    finally:
+        locked.chmod(0o755)
+    assert capsys.readouterr().out == ""
 
 
 def test_without_dev_tty_and_a_non_interactive_stdin_it_still_refuses(

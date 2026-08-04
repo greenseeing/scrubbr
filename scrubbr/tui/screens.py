@@ -1,10 +1,11 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, OptionList, Static
 
@@ -153,38 +154,95 @@ class ReplacementScreen(ModalScreen[str | None]):
         custom.remove_class("hidden")
 
 
-class DiffScreen(Screen[bool]):
+@dataclass(frozen=True)
+class DiffVerdict:
+    confirmed: bool
+    destination: str | None  # None: emit to stdout
+
+
+class DiffScreen(Screen[DiffVerdict]):
     """The full diff — the last look before the scrubbed text is emitted."""
 
     DEFAULT_CSS = """
     DiffScreen VerticalScroll {
         padding: 0 1;
     }
+    #destination-row {
+        height: 1;
+        padding: 0 1;
+        background: $panel;
+    }
+    #destination-row Static {
+        width: auto;
+    }
+    #destination {
+        border: none;
+        height: 1;
+        padding: 0;
+        width: 1fr;
+    }
     """
+
+    # The app's AUTO_FOCUS "*" would land on the destination Input, so the second `y`
+    # would type into the path instead of confirming.
+    AUTO_FOCUS: ClassVar[str | None] = "VerticalScroll"
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("y", "confirm", "emit"),
         Binding("enter", "confirm", "emit", show=False),
+        Binding("e", "edit_path", "edit path"),
         Binding("escape", "back", "back"),
         Binding("b", "back", "back", show=False),
     ]
 
-    def __init__(self, original: str, scrubbed: str, residuals: Sequence[Residual]) -> None:
+    def __init__(
+        self,
+        original: str,
+        scrubbed: str,
+        residuals: Sequence[Residual],
+        destination: str | None = None,
+    ) -> None:
         super().__init__()
         self._original = original
         self._scrubbed = scrubbed
         self._residuals = residuals
+        self._destination = destination
 
     def compose(self) -> ComposeResult:
+        if self._destination is not None:
+            with Horizontal(id="destination-row"):
+                yield Static("write to ")
+                yield Input(value=self._destination, id="destination")
         with VerticalScroll():
             yield Static(self._rendered())
         yield Footer()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "edit_path":
+            return self._destination is not None
+        return True
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.query_one(VerticalScroll).focus()
+
+    def action_edit_path(self) -> None:
+        self.query_one("#destination", Input).focus()
+
     def action_confirm(self) -> None:
-        self.dismiss(True)
+        self.dismiss(DiffVerdict(True, self._chosen()))
 
     def action_back(self) -> None:
-        self.dismiss(False)
+        # Input consumes printable keys and enter but not escape, so mid-edit it lands
+        # here; leaving the field then must not also leave the diff.
+        if self._destination is not None and self.query_one("#destination", Input).has_focus:
+            self.query_one(VerticalScroll).focus()
+            return
+        self.dismiss(DiffVerdict(False, None))
+
+    def _chosen(self) -> str | None:
+        if self._destination is None:
+            return None
+        return self.query_one("#destination", Input).value.strip() or self._destination
 
     def _rendered(self) -> Text:
         body = Text()

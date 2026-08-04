@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- When standard output is an interactive terminal and no `-o` is given, the cleaned text
+  is written to `NAME.scrubbed.EXT` next to the input (`scrubbed.txt` for piped input)
+  instead of being dumped onto the screen. The diff screen shows the destination and `e`
+  edits it; the `--plain` prompt names it (`write scrubbed text to …? [y/N]`).
+
+### Changed
+
+- An interactive terminal never receives the scrubbed text on stdout; pipes and
+  redirections are byte-for-byte unchanged, as is `-o`.
+
 ## [0.3.0] - 2026-08-03
 
 The review is now a full-screen interface. Piped and scripted use (`-y`, non-interactive

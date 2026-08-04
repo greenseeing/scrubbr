@@ -24,6 +24,8 @@ class ReviewRequest:
     result: ScrubResult
     identity: LocalIdentity
     book: AliasBook
+    # The file offered when stdout is an interactive terminal; None means emit to stdout.
+    default_output: str | None = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class ReviewOutcome:
     confirmed: bool
     result: ScrubResult
     decisions: Decisions
+    destination: str | None = None
 
 
 def apply_decisions(
