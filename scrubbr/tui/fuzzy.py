@@ -5,25 +5,33 @@ from textual.fuzzy import Matcher
 from scrubbr.kinds import Residual
 
 MIN_TOKEN_CHARS = 3
-MAX_CANDIDATES = 5000
 MAX_OPTIONS = 50
+# Subsequence scoring costs ~2 µs per candidate; past this it would stall every keystroke.
+MAX_FUZZY_POOL = 25_000
 _TRIM = ".,;:!?'\"()[]{}<>="
 
 
 def candidates(text: str, residuals: Sequence[Residual]) -> list[str]:
-    """What a reviewer might want to scrub: residual warnings first, then every token."""
+    """What a reviewer might want to scrub: residual warnings first, then every token.
+
+    Unbounded on purpose: a capped pool silently hides exactly the token the reviewer
+    is searching for once the file is large enough.
+    """
     seen = dict.fromkeys(residual.text for residual in residuals)
     for token in text.split():
         trimmed = token.strip(_TRIM)
         if len(trimmed) >= MIN_TOKEN_CHARS:
             seen.setdefault(trimmed, None)
-        if len(seen) >= MAX_CANDIDATES:
-            break
     return list(seen)
 
 
 def options_for(query: str, text: str, pool: Sequence[str]) -> list[tuple[str, str]]:
-    """(label, value) choices for a query: the exact occurrence first, then fuzzy matches."""
+    """(label, value) choices for a query: the exact occurrence first, then matches.
+
+    Substring hits lead (in pool order, so residuals stay first) because they are cheap
+    enough to scan an unbounded pool on every keystroke; the fuzzy matcher only runs
+    when they leave room to fill and the pool is small enough to score interactively.
+    """
     if not query:
         return [(value, value) for value in pool[:MAX_OPTIONS]]
     options: list[tuple[str, str]] = []
@@ -31,10 +39,19 @@ def options_for(query: str, text: str, pool: Sequence[str]) -> list[tuple[str, s
     if occurrences:
         plural = "s" if occurrences > 1 else ""
         options.append((f'scrub "{query}" everywhere ({occurrences} occurrence{plural})', query))
-    matcher = Matcher(query)
-    scored = sorted(
-        ((matcher.match(value), value) for value in pool),
-        key=lambda pair: (-pair[0], pair[1]),
-    )
-    options.extend((value, value) for score, value in scored if score > 0 and value != query)
+    folded = query.lower()
+    contained = [value for value in pool if value != query and folded in value.lower()]
+    options.extend((value, value) for value in contained[:MAX_OPTIONS])
+    if len(options) < MAX_OPTIONS and len(pool) <= MAX_FUZZY_POOL:
+        matcher = Matcher(query)
+        shown = set(contained)
+        scored = sorted(
+            (
+                (matcher.match(value), value)
+                for value in pool
+                if value != query and value not in shown
+            ),
+            key=lambda pair: (-pair[0], pair[1]),
+        )
+        options.extend((value, value) for score, value in scored if score > 0)
     return options[:MAX_OPTIONS]

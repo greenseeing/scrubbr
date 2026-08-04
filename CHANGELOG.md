@@ -18,6 +18,13 @@ All notable changes to this project are documented here. The format follows
 - An interactive terminal never receives the scrubbed text on stdout; pipes and
   redirections are byte-for-byte unchanged, as is `-o`.
 
+### Fixed
+
+- The fuzzy finder (`a`) now sees every token in the file. The candidate pool was
+  silently capped at the first 5000 distinct tokens, so anything deeper in a long log —
+  a serial number, say — could never be found. Matching is now substring-first, which
+  keeps every keystroke instant even on very large files.
+
 ## [0.3.0] - 2026-08-03
 
 The review is now a full-screen interface. Piped and scripted use (`-y`, non-interactive
