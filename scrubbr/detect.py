@@ -53,19 +53,79 @@ class Match:
 # Distinctive-prefix provider credentials, tried ahead of everything else. Each is
 # well-specified (fixed prefix + validated length/charset), which is the gate for SCRUB;
 # a shape too collision-prone to auto-rewrite is downgraded to WARN, never suppressed.
-# Public identifiers that merely share a shape (Stripe pk_, Twilio AC) get no rule at all.
+# Public identifiers that merely share a shape (Stripe pk_, AWS AGPA/AIDA identity ids,
+# Twilio AC) get no rule at all. Every entry classifies to SECRET_VALUE so its replacement
+# is a shape-preserving random string, never a readable or deterministic alias -- a
+# deterministic alias of a real secret would be a confirmation oracle. Adding a provider is
+# one line here: the red-team-corrected catalog is the spec (research brief Appendix A.1),
+# not the raw survey regexes. Every quantifier is bounded, so no entry can backtrack
+# catastrophically on a large adversarial dump.
 PROVIDER_RULES: tuple[Rule, ...] = (
-    # GitHub PAT / OAuth: fixed prefix + 36 base62. Classified SECRET_VALUE so the
-    # replacement is a shape-preserving random string, never a readable or deterministic
-    # alias -- a deterministic alias of a real secret would be a confirmation oracle.
+    # -- GitHub: 36 base62 (classic) / 82 (fine-grained) after the prefix --
+    Rule("github_token", Kind.SECRET_VALUE, r"\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36}\b"),
+    Rule("github_pat", Kind.SECRET_VALUE, r"\bgithub_pat_[0-9A-Za-z_]{82}\b"),
+    # -- GitLab PAT. A trailing (?!...) fence rather than \b: '-' is in the charset but not
+    #    a word char, so \b would FAIL (leaking the token) when the token ends in '-'. --
+    Rule("gitlab_pat", Kind.SECRET_VALUE, r"\bglpat-[0-9A-Za-z_-]{20,64}(?![0-9A-Za-z_-])"),
+    # -- AWS access key id: base32 tail. Only AKIA/ASIA -- the AGPA/AIDA/AROA/AIPA identity
+    #    ids share the length but are public and excluded by construction. --
+    Rule("aws_access_key", Kind.SECRET_VALUE, r"\b(?:AKIA|ASIA)[A-Z2-7]{16}\b"),
+    # -- Slack bot / user tokens. The bot tail is bounded so a token glued to an adjacent
+    #    hyphenated field can only over-consume a bounded amount, never run away. --
+    Rule("slack_bot", Kind.SECRET_VALUE, r"\bxoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]{0,64}"),
+    Rule("slack_user", Kind.SECRET_VALUE, r"\bxox[pe](?:-[0-9]{10,13}){3}-[a-zA-Z0-9-]{28,34}"),
+    # -- Stripe secret / restricted. pk_ (publishable) is public and gets no rule. --
     Rule(
-        "github_token",
+        "stripe_secret",
         Kind.SECRET_VALUE,
-        r"\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36}\b",
-        disposition=Disposition.SCRUB,
+        r"\b(?:sk|rk)_(?:test|live|prod)_[a-zA-Z0-9]{10,99}\b",
     ),
-    # Twilio API key: SK + 32 hex. The 32-hex tail collides with MD5 digests and IDs that
-    # fill ordinary logs, so it is flagged for review rather than auto-scrubbed.
+    # -- Google API key (trailing fence, not \b, so a key ending in '-' still matches) --
+    Rule("google_api_key", Kind.SECRET_VALUE, r"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])"),
+    # -- SendGrid (trailing fence, not \b, for the same '-'-in-charset reason) --
+    Rule(
+        "sendgrid",
+        Kind.SECRET_VALUE,
+        r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![0-9A-Za-z_-])",
+    ),
+    # -- OpenAI: the T3BlbkFJ infix anchor is mandatory; both flanks are bounded --
+    Rule(
+        "openai",
+        Kind.SECRET_VALUE,
+        r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{0,120}T3BlbkFJ[A-Za-z0-9_-]{0,120}",
+    ),
+    # -- Anthropic (incl. the oauth oat01 variant) --
+    Rule("anthropic", Kind.SECRET_VALUE, r"\bsk-ant-(?:api03|oat01)-[a-zA-Z0-9_-]{93}AA\b"),
+    # -- npm: fixed length 36 --
+    Rule("npm", Kind.SECRET_VALUE, r"\bnpm_[A-Za-z0-9]{36}\b"),
+    # -- PyPI: macaroon header anchor, upper-bounded so it can't run past the token --
+    Rule("pypi", Kind.SECRET_VALUE, r"\bpypi-AgEIcHlwaS5vcmc[\w-]{50,255}"),
+    # -- Azure storage: base64 of 64 bytes is 88 chars ending in '==', i.e. 86 body chars
+    #    then the padding (the appendix's {88}== was off by two and matched nothing real).
+    #    The AccountKey= label and == padding stay readable; only the body is scrubbed. --
+    Rule(
+        "azure_storage",
+        Kind.SECRET_VALUE,
+        r"AccountKey=(?P<azure_key>[A-Za-z0-9+/]{86})==",
+        value_group="azure_key",
+    ),
+    # -- Slack / Discord webhooks: the host stays readable; only the credential path is
+    #    scrubbed. --
+    Rule(
+        "slack_webhook",
+        Kind.SECRET_VALUE,
+        r"https://hooks\.slack\.com/(?:services|workflows|triggers)/"
+        r"(?P<slack_hook>[A-Za-z0-9+/]{43,56})",
+        value_group="slack_hook",
+    ),
+    Rule(
+        "discord_webhook",
+        Kind.SECRET_VALUE,
+        r"https://discord\.com/api/webhooks/[0-9]{17,19}/(?P<discord_hook>[A-Za-z0-9_-]{10,120})",
+        value_group="discord_hook",
+    ),
+    # -- Twilio API key: SK + 32 hex. The 32-hex tail collides with MD5 digests and IDs
+    #    that fill ordinary logs, so it is flagged for review rather than auto-scrubbed. --
     Rule(
         "twilio_sk",
         Kind.SECRET_VALUE,

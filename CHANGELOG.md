@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- A catalog of distinctive-prefix provider credentials is now scrubbed on sight: AWS access
+  keys (`AKIA…`/`ASIA…`), GitHub classic and fine-grained tokens, GitLab, Slack bot/user
+  tokens and webhooks, Discord webhooks, Stripe secret/restricted keys, Google API keys,
+  SendGrid, OpenAI (`…T3BlbkFJ…`), Anthropic (incl. `oat01` OAuth), npm, PyPI and Azure
+  storage `AccountKey=`. Each becomes a shape-preserving random look-alike, never a readable
+  or deterministic alias. Public look-alikes are left alone by design — Stripe publishable
+  keys (`pk_…`) and the AWS `AGPA/AIDA/AROA/AIPA` identity ids get no rule. For the URL- and
+  label-shaped ones (webhooks, Azure) the readable host or `AccountKey=` label survives and
+  only the credential portion is rewritten. Every pattern is bounded against catastrophic
+  backtracking.
 - Detection now sorts every match into one of three dispositions. **Scrub**: a credential
   with a distinctive prefix is actively removed — a GitHub token (`ghp_…`) becomes a random,
   shape-preserving look-alike, never a readable or reversible alias. **Warn**: a shape too
