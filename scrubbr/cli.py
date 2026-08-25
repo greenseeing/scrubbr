@@ -14,6 +14,7 @@ import structlog
 from scrubbr.alias import AliasBook
 from scrubbr.decisions import ReviewOutcome, ReviewRequest
 from scrubbr.identity import LocalIdentity
+from scrubbr.kinds import Kind
 from scrubbr.report import clip, render_report
 from scrubbr.review import (
     NoTerminal,
@@ -102,7 +103,32 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         " loopback), long hex, UUIDs and emails keep their shape; a name becomes a numbered"
         " surrogate like redacted-a",
     )
+    for role, kind in _ROLE_FLAGS:
+        parser.add_argument(
+            f"--also-{role}",
+            action="append",
+            default=[],
+            metavar="NAME",
+            help=f"scrub this value too and type its surrogate as {kind}-a; repeatable",
+        )
     return parser.parse_args(argv)
+
+
+# Role hints whose surrogate reads as its kind (host-a / person-b / project-c) instead of
+# a generic redacted-*.
+_ROLE_FLAGS: tuple[tuple[str, Kind], ...] = (
+    ("host", Kind.HOSTNAME),
+    ("person", Kind.PERSON),
+    ("project", Kind.PROJECT),
+)
+
+
+def _roles(args: argparse.Namespace) -> tuple[tuple[str, Kind], ...]:
+    return tuple(
+        (value, kind)
+        for role, kind in _ROLE_FLAGS
+        for value in getattr(args, f"also_{role}")
+    )
 
 
 def _report(log: structlog.stdlib.BoundLogger, result: ScrubResult, verbose: bool) -> None:
@@ -158,7 +184,9 @@ def main(
         args.infile = sys.stdin
     text = args.infile.read()
     base = LocalIdentity() if args.no_identity else LocalIdentity.local()
-    identity = replace(base, extra=base.extra + tuple(args.also))
+    identity = replace(
+        base, extra=base.extra + tuple(args.also), roles=base.roles + _roles(args)
+    )
     # One book for the whole run, so an interactive recompute can never re-mint aliases.
     book = AliasBook()
     result = scrub(text, identity, book)

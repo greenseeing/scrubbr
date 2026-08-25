@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Detection now sorts every match into one of three dispositions. **Scrub**: a credential
+  with a distinctive prefix is actively removed — a GitHub token (`ghp_…`) becomes a random,
+  shape-preserving look-alike, never a readable or reversible alias. **Warn**: a shape too
+  collision-prone to rewrite safely — a Twilio API key (`SK` + 32 hex, indistinguishable from
+  an MD5) — is shown in the review as a warn row with a line number rather than rewritten.
+  Left alone: a public identifier that merely shares a shape, such as a Stripe publishable
+  key (`pk_…`). `--strict` still refuses to emit while any warn row remains.
+- `--also-host`, `--also-person` and `--also-project` type a declared name so its surrogate
+  reads as its kind — `host-a`, `person-b`, `project-c` — instead of a generic `redacted-*`.
+  A bare `--also` value with no hint stays `redacted-*`; casing collapses to one surrogate.
+
 ### Changed
 
 - A `--also` name — anything scrubbr redacts that has no shape of its own — now becomes a
@@ -13,12 +26,24 @@ All notable changes to this project are documented here. The format follows
   `[REDACTED]` constant. Two declared names stay distinct and one name keeps the same
   surrogate at every occurrence, so `redacted-a could not reach redacted-b` stays
   followable. The same name written in different cases maps to one surrogate.
+- Re-running scrubbr on an already-scrubbed file no longer keeps rewriting it: a minted
+  readable surrogate (`redacted-a`, `host-b`), a scrubbed email and a documentation IP are
+  all fixed points, and the random look-alike minted for a secret now carries a marker so a
+  second pass never re-scrubs it or re-flags it as high entropy. Declaring a name that
+  collides with a surrogate stem (`--also redacted`) is a fixed point too. (Shape-only
+  surrogates — a random MAC, UUID or hex string — are still re-randomised on a re-scrub, as
+  they always were.)
 
 ### Fixed
 
 - The docs no longer imply a shared random seed reproduces the readable numbered aliases
   across runs. A seed reproduces the random shape replacements; the numbered surrogates are
   assigned in order of first appearance and reproduce only across a shared alias book.
+- A large diagnostic can no longer wedge the scanner: the email rule bounded its local part
+  (RFC 5321's 64-octet limit), removing quadratic backtracking on a long run of
+  address-shaped characters that no other rule consumed.
+- The IPv4 documentation-address pool (762 addresses) now warns when it overflows instead of
+  silently wrapping two distinct source addresses onto one alias.
 
 ## [0.4.0] - 2026-08-04
 

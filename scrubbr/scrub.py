@@ -8,14 +8,16 @@ from pydantic import BaseModel, ConfigDict
 from scrubbr.alias import AliasBook
 from scrubbr.detect import detect
 from scrubbr.identity import SYSTEM_USERNAMES, LocalIdentity
-from scrubbr.kinds import Finding, Kind, Residual
+from scrubbr.kinds import Disposition, Finding, Kind, Residual
 from scrubbr.residual import find_residuals
 from scrubbr.shapes import (
     DOCUMENTATION_V4,
     DOCUMENTATION_V6,
+    IPV4_POOL_SIZE,
     classify,
     embedded_mac,
     is_reserved_mac,
+    is_synthetic,
     to_eui64,
 )
 
@@ -52,7 +54,7 @@ def scrub(
 ) -> ScrubResult:
     if book is None:
         book = AliasBook()
-    findings, replacements, unresolved = _sweep(text, identity, (), book, keep, overrides)
+    findings, replacements, warnings = _sweep(text, identity, (), book, keep, overrides)
 
     # A value found behind a keyword has to be scrubbed everywhere else it appears too,
     # or `psk=hunter2` is rewritten while the bare `hunter2` two lines down survives.
@@ -62,18 +64,39 @@ def scrub(
         {(f.text, f.kind) for f in findings if f.kind in {Kind.SECRET_VALUE, Kind.SSID}}
     )
     if promoted:
-        findings, replacements, unresolved = _sweep(
+        findings, replacements, warnings = _sweep(
             text, identity, promoted, book, keep, overrides
         )
 
     out, written = _splice(text, replacements)
+    residuals = find_residuals(out, written, warnings)
+    residuals.extend(_pool_overflow(book))
     counts = Counter(finding.kind for finding in _distinct(findings))
     return ScrubResult(
         text=out,
         findings=findings,
-        residuals=find_residuals(out, written, unresolved),
+        residuals=residuals,
         counts=dict(counts),
     )
+
+
+def _pool_overflow(book: AliasBook) -> list[Residual]:
+    """Warn once the IPv4 documentation pool has run out of distinct addresses.
+
+    RFC 5737 gives only 762 usable documentation hosts. Beyond that the pool wraps, so
+    two distinct source addresses can share one alias -- say so rather than let the log
+    quietly stop correlating.
+    """
+    overflow = book.issued(Kind.IPV4) - IPV4_POOL_SIZE
+    if overflow <= 0:
+        return []
+    return [
+        Residual(
+            line=1,
+            text=f"{overflow} address(es) past the {IPV4_POOL_SIZE}-address documentation pool",
+            reason="ipv4 documentation alias pool exhausted; aliases may repeat",
+        )
+    ]
 
 
 def _sweep(
@@ -83,12 +106,22 @@ def _sweep(
     book: AliasBook,
     keep: frozenset[tuple[Kind, str]],
     overrides: Mapping[tuple[Kind, str], str],
-) -> tuple[list[Finding], list[tuple[int, int, str]], list[str]]:
+) -> tuple[list[Finding], list[tuple[int, int, str]], list[tuple[str, str]]]:
     findings: list[Finding] = []
     replacements: list[tuple[int, int, str]] = []
-    unresolved: list[str] = []
+    warnings: list[tuple[str, str]] = []
+    # Values a scrub decision has already been made for: a keyword-confirmed secret to scrub
+    # everywhere (promotion), or one the caller declared. Either outranks a WARN-tier match.
+    demanded = {value.lower() for value, _ in promoted}
+    demanded |= {value.lower() for value in identity.extra}
+    demanded |= {value.lower() for value, _ in identity.roles}
 
     for match in detect(text, identity, promoted):
+        if not match.forced and is_synthetic(match.text):
+            # Our own minted secret/email surrogate, seen again on a re-scrub. Keep it
+            # verbatim so a second pass is a fixed point. A value the caller explicitly
+            # declared (--also) is never skipped here: an intentional request always wins.
+            continue
         kind = _by_shape(match.kind, match.text)
         if kind is Kind.IPV6 and not _parses_as_ipv6(match.text):
             # Colon-hex that is neither a MAC, a fingerprint nor a valid address. Leave it
@@ -96,19 +129,43 @@ def _sweep(
             # at least as long as a MAC qualify, or every "22:20:36" in the timestamp
             # column gets reported and the warning stops being read.
             if match.text.count(":") + 1 >= MIN_UNRESOLVED_GROUPS:
-                unresolved.append(match.text)
+                warnings.append((match.text, "unrecognized structure"))
             continue
         key = decision_key(kind, match.text)
+        override = overrides.get(key)
+        if match.disposition is Disposition.WARN and not (
+            override or match.text.lower() in demanded
+        ):
+            # Distinctive enough to flag but too collision-prone to rewrite on its own:
+            # surface it in the same warning channel as the residual net. An explicit scrub
+            # decision -- a review override, a promotion, or --also -- overrides the warning
+            # so a confirmed secret can never be scrubbed in one place and left in another.
+            warnings.append((match.text, match.reason or "flagged for review"))
+            continue
         if key in keep:
             continue
-        replacement = overrides.get(key) or _replacement(kind, match.text, book, match.forced)
+        replacement = override or _replacement(kind, match.text, book, match.forced)
         if replacement is None:
             continue
+        if text[match.start : match.start + len(replacement)] == replacement:
+            # This occurrence is already exactly its own alias -- a declared stem literal
+            # sitting inside its surrogate (redacted inside redacted-a). Re-splicing would
+            # grow redacted-a-a; leaving it is the fixed point. Bound to the actual minted
+            # alias, so an unrelated compound that merely looks like a label (user-alice)
+            # is still scrubbed.
+            continue
         findings.append(
-            Finding(kind=kind, start=match.start, end=match.end, text=match.text, alias=replacement)
+            Finding(
+                kind=kind,
+                start=match.start,
+                end=match.end,
+                text=match.text,
+                alias=replacement,
+                disposition=Disposition.SCRUB,
+            )
         )
         replacements.append((match.start, match.end, replacement))
-    return findings, replacements, unresolved
+    return findings, replacements, warnings
 
 
 def _by_shape(kind: Kind, text: str) -> Kind:

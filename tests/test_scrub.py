@@ -310,15 +310,10 @@ class TestRedactedSurrogates:
         assert Kind.REDACTED not in second.counts, "a surrogate must not be re-redacted"
         assert second.residuals == [], "a surrogate must not be re-warned"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="declaring the surrogate stem word 'redacted' self-collides "
-        "(redacted-a re-matches the literal); closed by the sentinel, issue #5",
-    )
     def test_declaring_the_surrogate_stem_word_is_a_fixed_point(self) -> None:
-        # A surrogate is redacted-a, so a declared literal 'redacted' matches inside its own
-        # replacement and grows redacted-a-a on every pass. Only a reserved sentinel that the
-        # detector skips can make this idempotent -- that is R3/#5, not R1.
+        # A surrogate is redacted-a, so a declared literal 'redacted' would match inside its
+        # own replacement and grow redacted-a-a on every pass. The detector now skips matches
+        # that fall inside one of scrubbr's own surrogate labels, so this is idempotent.
         identity = LocalIdentity(extra=("redacted",))
         first = scrub("the value is redacted here", identity=identity)
         second = scrub(first.text, identity=identity)
@@ -379,9 +374,13 @@ class TestGlobalIpv6:
 
 class TestResidualRisk:
     def test_unmatched_high_entropy_token_is_reported_not_scrubbed(self) -> None:
-        result = scrub("token ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")
-        assert result.residuals, "a credential-shaped token must be reported"
-        assert any("ghp_" in r.text for r in result.residuals)
+        # A high-entropy token behind no distinctive prefix is the REPORT-ONLY net's job:
+        # flagged, never rewritten. (Credential-prefixed tokens like ghp_ now SCRUB -- see
+        # tests/test_dispositions.py.)
+        token = "kJH8s2Vx9pQ7wLm3tR5uYq2Zx8Nw4Kd"
+        result = scrub(f"token {token}")
+        assert token in result.text, "an unrecognised token must not be rewritten"
+        assert any(token == r.text for r in result.residuals)
 
     def test_clean_text_reports_no_residuals(self) -> None:
         result = scrub("nothing to see here, just ordinary words\n")

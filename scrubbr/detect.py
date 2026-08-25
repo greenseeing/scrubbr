@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from scrubbr.identity import LocalIdentity
-from scrubbr.kinds import Kind
+from scrubbr.kinds import Disposition, Kind
 from scrubbr.shapes import EMAIL_PATTERN, HEX_PATTERN, UUID_PATTERN, classify_literal
 
 # An RSA-8192 key is around 12 KB of base64, so this fits any real key while keeping an
@@ -33,6 +33,10 @@ class Rule:
     pattern: str
     value_group: str | None = None
     forced: bool = False
+    disposition: Disposition = Disposition.SCRUB
+    # Shown in the review when the rule only WARNs, explaining why a match is flagged but
+    # left in place.
+    warn_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,7 +46,34 @@ class Match:
     end: int
     text: str
     forced: bool = False
+    disposition: Disposition = Disposition.SCRUB
+    reason: str | None = None
 
+
+# Distinctive-prefix provider credentials, tried ahead of everything else. Each is
+# well-specified (fixed prefix + validated length/charset), which is the gate for SCRUB;
+# a shape too collision-prone to auto-rewrite is downgraded to WARN, never suppressed.
+# Public identifiers that merely share a shape (Stripe pk_, Twilio AC) get no rule at all.
+PROVIDER_RULES: tuple[Rule, ...] = (
+    # GitHub PAT / OAuth: fixed prefix + 36 base62. Classified SECRET_VALUE so the
+    # replacement is a shape-preserving random string, never a readable or deterministic
+    # alias -- a deterministic alias of a real secret would be a confirmation oracle.
+    Rule(
+        "github_token",
+        Kind.SECRET_VALUE,
+        r"\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36}\b",
+        disposition=Disposition.SCRUB,
+    ),
+    # Twilio API key: SK + 32 hex. The 32-hex tail collides with MD5 digests and IDs that
+    # fill ordinary logs, so it is flagged for review rather than auto-scrubbed.
+    Rule(
+        "twilio_sk",
+        Kind.SECRET_VALUE,
+        r"\bSK[0-9a-fA-F]{32}\b",
+        disposition=Disposition.WARN,
+        warn_reason="possible twilio api key (32-hex; not auto-scrubbed)",
+    ),
+)
 
 # Ordered most-specific first. Alternation resolves precedence: at any position the
 # earliest alternative that matches wins, which is what makes the colon-hex family
@@ -161,31 +192,36 @@ CONTEXTUAL_RULES: tuple[Rule, ...] = (
 def _literal_rules(
     identity: LocalIdentity, promoted: tuple[tuple[str, Kind], ...]
 ) -> tuple[Rule, ...]:
-    literals: list[tuple[str, Kind, bool]] = []
+    # value, kind, forced, fold_case
+    literals: list[tuple[str, Kind, bool, bool]] = []
     if identity.hostname:
-        literals.append((identity.hostname, Kind.HOSTNAME, False))
+        literals.append((identity.hostname, Kind.HOSTNAME, False, False))
         short = identity.hostname.split(".")[0]
         if short != identity.hostname:
-            literals.append((short, Kind.HOSTNAME, False))
+            literals.append((short, Kind.HOSTNAME, False, False))
     # An extra value is explicitly declared, so it is scrubbed unconditionally -- forced
     # past the keep-allowlists that judge only incidental matches.
-    literals.extend((value, classify_literal(value), True) for value in identity.extra)
+    literals.extend((value, classify_literal(value), True, False) for value in identity.extra)
+    # A role hint carries its surrogate kind explicitly and folds case, so alice/Alice/ALICE
+    # collapse to one person-a rather than shape-classifying to a generic redacted-*.
+    literals.extend((value, kind, True, True) for value, kind in identity.roles)
     if identity.username:
-        literals.append((identity.username, Kind.USERNAME, False))
-    literals.extend((value, kind, False) for value, kind in promoted)
+        literals.append((identity.username, Kind.USERNAME, False, False))
+    literals.extend((value, kind, False, False) for value, kind in promoted)
     # Longest first: a username is frequently a substring of the hostname ("dev" inside
     # "dev-thinkpad"), and the longer match has to win at that position.
     literals.sort(key=lambda entry: len(entry[0]), reverse=True)
     return tuple(
-        Rule(f"literal_{index}", kind, _literal_pattern(value, kind), forced=forced)
-        for index, (value, kind, forced) in enumerate(literals)
+        Rule(f"literal_{index}", kind, _literal_pattern(value, kind, fold_case), forced=forced)
+        for index, (value, kind, forced, fold_case) in enumerate(literals)
     )
 
 
-def _literal_pattern(value: str, kind: Kind) -> str:
+def _literal_pattern(value: str, kind: Kind, fold_case: bool = False) -> str:
     escaped = re.escape(value)
-    if kind is Kind.IPV6:
-        # Forcing must survive the log spelling FE80::1 as fe80::1.
+    if kind is Kind.IPV6 or fold_case:
+        # Forcing must survive the log spelling FE80::1 as fe80::1, or a role hint's name
+        # appearing in a different case than it was declared.
         escaped = f"(?i:{escaped})"
     return rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
 
@@ -194,7 +230,12 @@ def _literal_pattern(value: str, kind: Kind) -> str:
 def _compiled(
     identity: LocalIdentity, promoted: tuple[tuple[str, Kind], ...]
 ) -> tuple[re.Pattern[str], dict[str, Rule]]:
-    rules = STRUCTURAL_RULES + _literal_rules(identity, promoted) + CONTEXTUAL_RULES
+    rules = (
+        PROVIDER_RULES
+        + STRUCTURAL_RULES
+        + _literal_rules(identity, promoted)
+        + CONTEXTUAL_RULES
+    )
     combined = "|".join(f"(?P<{rule.name}>{rule.pattern})" for rule in rules)
     return re.compile(combined), {rule.name: rule for rule in rules}
 
@@ -223,6 +264,14 @@ def detect(
         if start < 0 or start == end:
             continue
         matches.append(
-            Match(kind=rule.kind, start=start, end=end, text=text[start:end], forced=rule.forced)
+            Match(
+                kind=rule.kind,
+                start=start,
+                end=end,
+                text=text[start:end],
+                forced=rule.forced,
+                disposition=rule.disposition,
+                reason=rule.warn_reason,
+            )
         )
     return matches

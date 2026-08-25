@@ -32,6 +32,11 @@ class AliasBook:
         self._canonical[key] = minted
         return minted
 
+    def issued(self, kind: Kind) -> int:
+        """How many distinct values have been aliased for a kind -- lets a bounded pool
+        (the IPv4 documentation ranges) tell whether it has overflowed."""
+        return self._issued.get(kind, 0)
+
     def _next(self, kind: Kind) -> int:
         index = self._issued.get(kind, 0)
         self._issued[kind] = index + 1
