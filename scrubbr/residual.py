@@ -1,11 +1,9 @@
-import math
 import re
 from bisect import bisect_right
-from collections import Counter
 from collections.abc import Sequence
 
 from scrubbr.kinds import Residual
-from scrubbr.shapes import SENTINEL
+from scrubbr.shapes import SENTINEL, shannon_entropy
 
 MIN_TOKEN_CHARS = 20
 MIN_ENTROPY_BITS = 3.5
@@ -31,12 +29,6 @@ CREDENTIAL_PREFIXES = (
 )
 
 TOKEN = re.compile(rf"[A-Za-z0-9_\-./+=]{{{MIN_TOKEN_CHARS},}}")
-
-
-def shannon_entropy(value: str) -> float:
-    counts = Counter(value)
-    total = len(value)
-    return -sum((n / total) * math.log2(n / total) for n in counts.values())
 
 
 def find_residuals(

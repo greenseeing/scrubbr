@@ -31,6 +31,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Keyword capture replaces the fixed ten-word list with case- and separator-insensitive
+  stems, so one stem catches `apiKey`, `API_KEY`, `api-key`, `access-token` and
+  `refreshToken` alike, and a separator-prefixed key like `DB_PASSWORD` or `MYAPP_API_KEY`
+  is caught too. The stem set is widened to modern names (`token`, `bearer`,
+  `authorization`, `credential(s)`, `oauth`, `dsn`, `connection_string`, `DATABASE_URL`, …).
+  A distinctive stem scrubs any non-empty value; a bare ambiguous stem
+  (`key`/`token`/`session`/`cert`/`connection`/`dsn`) only scrubs a value that clears a
+  length (≥10) and entropy (≥3.5) gate, so `token=0`/`token=next` are left alone while a
+  real high-entropy secret is not. A low-entropy value with a scrubbable shape (a 32-hex
+  blob behind `key=`) is still removed by its shape rule.
 - A `--also` name — anything scrubbr redacts that has no shape of its own — now becomes a
   distinguishable numbered surrogate (`redacted-a`, `redacted-b`, …) instead of the single
   `[REDACTED]` constant. Two declared names stay distinct and one name keeps the same

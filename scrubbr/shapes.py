@@ -1,11 +1,23 @@
 import ipaddress
+import math
 import random
 import re
 import string
+from collections import Counter
 
 from scrubbr.kinds import Kind
 
 HEX_MIN_CHARS = 32
+
+
+def shannon_entropy(value: str) -> float:
+    """Bits of entropy per character -- the shared measure the keyword gate and the
+    residual net both judge a candidate secret by."""
+    counts = Counter(value)
+    total = len(value)
+    if total == 0:
+        return 0.0
+    return -sum((n / total) * math.log2(n / total) for n in counts.values())
 
 # Length bounds are load-bearing, not cosmetic: an unbounded local part rescans the whole
 # remaining run at every start position looking for an `@`, which is O(n^2) across a large

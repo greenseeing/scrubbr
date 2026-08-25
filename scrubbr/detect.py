@@ -4,7 +4,14 @@ from functools import lru_cache
 
 from scrubbr.identity import LocalIdentity
 from scrubbr.kinds import Disposition, Kind
-from scrubbr.shapes import EMAIL_PATTERN, HEX_PATTERN, UUID_PATTERN, classify_literal
+from scrubbr.shapes import (
+    EMAIL_PATTERN,
+    HEX_PATTERN,
+    UUID_PATTERN,
+    classify,
+    classify_literal,
+    shannon_entropy,
+)
 
 # An RSA-8192 key is around 12 KB of base64, so this fits any real key while keeping an
 # unterminated BEGIN marker from backtracking across the whole file.
@@ -12,18 +19,58 @@ PEM_MAX_BODY = 20_000
 
 NO_IDENTITY = LocalIdentity()
 
-SECRET_KEYWORDS = (
-    "psk",
-    "password",
+# A bare, ambiguous stem (`token=…`) only scrubs a value that clears BOTH gates, so
+# `token=0` / `token=next` are left alone while a real high-entropy value is not.
+KEYWORD_VALUE_MIN_LEN = 10
+KEYWORD_VALUE_MIN_ENTROPY = 3.5
+
+# Stems whose compound/prefixed form is distinctive enough to scrub any non-empty value.
+# Each word boundary inside a stem is an optional [-_] so one entry matches snake_case,
+# kebab-case, camelCase and SCREAMING variants under (?i:). A separator-prefixed key such
+# as DB_PASSWORD or MYAPP_API_KEY is still caught because the stem then sits right after a
+# '_' (see _STEM_BOUNDARY). Ordering among strong stems is irrelevant -- they all scrub the
+# same value to the same SECRET_VALUE kind.
+STRONG_STEMS: tuple[str, ...] = (
     "passwd",
+    "password",
+    "passphrase",
+    "pwd",
+    "psk",
+    "client[-_]?secret",
     "secret",
-    "api_key",
-    "apikey",
-    "access_token",
-    "auth_token",
-    "client_secret",
-    "private_key",
+    "api[-_]?key",
+    "auth[-_]?key",
+    "access[-_]?key",
+    "account[-_]?key",
+    "service[-_]?key",
+    "database[-_]?key",
+    "db[-_]?key",
+    "priv(?:ate)?[-_]?key",
+    "client[-_]?key",
+    "access[-_]?token",
+    "auth[-_]?token",
+    "refresh[-_]?token",
+    "bearer",
+    "authorization",
+    "credentials?",
+    "oauth",
+    "connection[-_]?string",
+    "database[-_]?url",
+    "db[-_]?url",
+    "database[-_]?pass(?:word)?",
+    "db[-_]?pass(?:word)?",
 )
+
+# Bare, ambiguous stems: gated on value length AND entropy so ordinary diagnostics
+# (`token=0`, `session=idle`) survive but a real secret does not.
+GENERIC_STEMS: tuple[str, ...] = ("key", "token", "session", "cert", "connection", "dsn")
+
+# The stem must begin at a segment boundary -- start of a run of letters/digits, or right
+# after a separator like '_'/'-'/space. A FIXED-WIDTH negative lookbehind rather than a
+# variable-width \w* affix on purpose: it costs O(1) per position, so a pathological
+# unbroken word/hex run (which no larger rule consumes) can't wedge the scanner walking it
+# position by position. '_' is not in [A-Za-z0-9], so DB_PASSWORD / MYAPP_API_KEY still hit.
+_STEM_BOUNDARY = r"(?<![A-Za-z0-9])"
 
 
 @dataclass(frozen=True)
@@ -37,6 +84,9 @@ class Rule:
     # Shown in the review when the rule only WARNs, explaining why a match is flagged but
     # left in place.
     warn_reason: str | None = None
+    # A gated rule only scrubs a captured value that clears the length+entropy gate; below
+    # it the value is left in place (not warned) -- it is ordinary, not a secret.
+    gated: bool = False
 
 
 @dataclass(frozen=True)
@@ -221,12 +271,24 @@ CONTEXTUAL_RULES: tuple[Rule, ...] = (
         r"(?i:ssid)\s*[=:]\s*(?P<ssid_q>[\"'])(?P<ssid_val>[^\"']*)(?P=ssid_q)",
         value_group="ssid_val",
     ),
+    # A distinctive stem confirms any non-empty value is a secret: scrub it ungated.
     Rule(
         "secret_kv",
         Kind.SECRET_VALUE,
-        r"(?i:" + "|".join(SECRET_KEYWORDS) + r")\s*[=:]\s*"
-        r"(?P<secret_q>[\"']?)(?P<secret_val>[^\s\"',;]+)(?P=secret_q)",
-        value_group="secret_val",
+        _STEM_BOUNDARY + r"(?i:" + "|".join(STRONG_STEMS) + r")\s*[=:]\s*"
+        r"(?P<strong_q>[\"']?)(?P<strong_val>[^\s\"',;]+)(?P=strong_q)",
+        value_group="strong_val",
+    ),
+    # A bare, ambiguous stem: the value must be >=10 chars (here) AND high-entropy (gated in
+    # detect) before it scrubs, so `token=0`/`session=idle` are left alone. Tried after the
+    # strong rule so `api_key=…` is caught ungated rather than gated on entropy.
+    Rule(
+        "secret_kv_generic",
+        Kind.SECRET_VALUE,
+        _STEM_BOUNDARY + r"(?i:" + "|".join(GENERIC_STEMS) + r")\s*[=:]\s*"
+        rf"(?P<generic_q>[\"']?)(?P<generic_val>[^\s\"',;]{{{KEYWORD_VALUE_MIN_LEN},}})(?P=generic_q)",
+        value_group="generic_val",
+        gated=True,
     ),
     Rule(
         "home_path",
@@ -322,6 +384,17 @@ def detect(
         group = rule.value_group or rule.name
         start, end = found.span(group)
         if start < 0 or start == end:
+            continue
+        if (
+            rule.gated
+            and shannon_entropy(text[start:end]) < KEYWORD_VALUE_MIN_ENTROPY
+            and classify(text[start:end]) is None
+        ):
+            # A long but low-entropy value behind a bare stem (`token=aaaaaaaaaa`) is
+            # ordinary, not a secret -- leave it in place. But a value with a scrubbable
+            # shape (a 32-hex blob behind `key=`) must still be scrubbed by that shape:
+            # dropping it here would let the keyword rule swallow the span and preempt the
+            # HEX/UUID rule that would otherwise catch it.
             continue
         matches.append(
             Match(
