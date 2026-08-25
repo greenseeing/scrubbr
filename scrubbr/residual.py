@@ -6,7 +6,37 @@ from scrubbr.kinds import Residual
 from scrubbr.shapes import SENTINEL, shannon_entropy
 
 MIN_TOKEN_CHARS = 20
-MIN_ENTROPY_BITS = 3.5
+# Per-charset thresholds instead of one mixed-alphabet number. Shannon entropy on a short
+# sample undershoots its alphabet's true bits/char, and by different amounts per alphabet:
+# a random 20-char HEX secret lands below 3.5 ~77% of the time (the old single threshold
+# silently missed most short hex secrets), while a random base64 secret lands higher. The
+# thresholds are set from the measured miss-rate of RANDOM secrets so a real short secret is
+# still surfaced -- a silent false negative is the one thing this net exists to prevent -- at
+# the cost of some report-only noise on ordinary hex ids (a 24-hex Mongo ObjectId, say).
+MIN_ENTROPY_BITS = 3.5  # the mixed-alphabet fallback (a token with a '.', '-', etc.)
+HEX_ENTROPY_BITS = 3.0  # a random hex secret clears this at every length >= 20
+BASE64_ENTROPY_BITS = 3.8  # clears random base64 at 24+ chars; 4.5 would silence most secrets
+
+# Structural shapes that read as high-entropy yet are obviously not secrets, excluded before
+# the entropy test. Deliberately NOT excluding the git-sha / machine-id / uuid SHAPES: those
+# are scrubbed by the HEX/UUID rules in normal operation and only reach this net when the
+# reviewer KEEPS them, where excluding by shape would silence a kept MD5/SHA-1-length secret
+# and defeat the "a kept value still reappears as a residual" safety net. A kept 32/40-hex
+# reappears here (correct); a kept uuid stays quiet on its own (entropy 3.4 < the threshold).
+_HEX_ONLY = re.compile(r"[0-9a-fA-F]+")
+# base64url alphabet; '/' (base64-standard) never reaches here -- _suspicion drops any token
+# containing '/' first -- so only base64url tokens are classified through this branch.
+_BASE64_ONLY = re.compile(r"[A-Za-z0-9+=_-]+")
+# An id-like field name: `id`/`userid` at the start or `_id` as a segment, each fenced by a
+# boundary so an ordinary word merely beginning with or containing those letters
+# (identifier, idempotency, a coincidental mid-token `_id`) is NOT wrongly excluded.
+_ID_LIKE = re.compile(r"(?:^(?:id|myid|userid)|_id)s?(?![A-Za-z0-9])", re.IGNORECASE)
+# Sequential strings have maximal Shannon entropy yet are obviously not secrets.
+_SEQUENCES = (
+    "0123456789abcdefghijklmnopqrstuvwxyz",
+    "abcdefghijklmnopqrstuvwxyz",
+    "0123456789",
+)
 
 CREDENTIAL_PREFIXES = (
     "ghp_",
@@ -106,6 +136,25 @@ def _suspicion(token: str) -> str | None:
         return "known credential prefix"
     if "/" in token or token.count(".") > 1:
         return None
-    if shannon_entropy(token) > MIN_ENTROPY_BITS:
+    if _is_structural(token):
+        # A sequential or id-like token reads as high-entropy but is an ordinary diagnostic
+        # value -- exclude it before the entropy test so the net stays readable.
+        return None
+    if shannon_entropy(token) > _entropy_threshold(token):
         return "high entropy"
     return None
+
+
+def _entropy_threshold(token: str) -> float:
+    if _HEX_ONLY.fullmatch(token):
+        return HEX_ENTROPY_BITS
+    if _BASE64_ONLY.fullmatch(token):
+        return BASE64_ENTROPY_BITS
+    return MIN_ENTROPY_BITS
+
+
+def _is_structural(token: str) -> bool:
+    if _ID_LIKE.search(token):
+        return True
+    low = token.lower()
+    return any(low in seq or low in seq[::-1] for seq in _SEQUENCES)

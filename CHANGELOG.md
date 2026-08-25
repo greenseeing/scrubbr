@@ -47,6 +47,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The report-only entropy net now judges a token against a per-charset threshold — hex
+  against a lower bar than base64 — after classifying its alphabet, instead of one
+  mixed-alphabet number. Short random secrets undershoot Shannon entropy by different amounts
+  per alphabet, so the single threshold silently missed most short hex secrets; the new bars
+  are set from the measured miss-rate of random secrets so a real short secret is still
+  surfaced. Sequential and id-like tokens are excluded before the entropy test to cut noise.
+  A kept secret still reappears as a residual at every length, including the common MD5- and
+  SHA-1-shaped 32- and 40-hex lengths.
 - Keyword capture replaces the fixed ten-word list with case- and separator-insensitive
   stems, so one stem catches `apiKey`, `API_KEY`, `api-key`, `access-token` and
   `refreshToken` alike, and a separator-prefixed key like `DB_PASSWORD` or `MYAPP_API_KEY`
