@@ -265,6 +265,34 @@ STRUCTURAL_RULES: tuple[Rule, ...] = (
 )
 
 CONTEXTUAL_RULES: tuple[Rule, ...] = (
+    # Structured credentials that live in a shape rather than key=value. These must precede
+    # secret_kv so `Authorization: Bearer <t>` scrubs the token, not the word "Bearer" (which
+    # the bare `authorization`/`bearer` stems would otherwise capture up to the space).
+    #
+    # Authorization: Bearer/Basic -- keep the header label, scrub only the credential. The
+    # label and scheme may be JSON-quoted (structlog output), and the value runs to the next
+    # delimiter (whitespace/quote/comma/semicolon) rather than an RFC token charset, so an
+    # `id:secret`-shaped value is scrubbed whole instead of truncated at the ':'.
+    Rule(
+        "authz_header",
+        Kind.SECRET_VALUE,
+        r"[\"']?(?i:authorization)[\"']?\s*:\s*[\"']?(?i:bearer|basic)\s+"
+        r"(?P<authz_val>[^\s\"',;]{1,4096})",
+        value_group="authz_val",
+    ),
+    # URL userinfo / DSN: scheme://user:pass@host. Scrub only the password, leaving the
+    # scheme, host and db name readable. Covers http(s), postgres, mysql, mongodb(+srv),
+    # redis, amqp, ... The scheme is length-bounded so a long [a-z0-9+.-] run with no `://`
+    # cannot backtrack quadratically; the length bounds (not the character classes) are what
+    # keep matching linear. The user class excludes '/' so it stops at a path; the password
+    # class must NOT -- a base64 password contains '/', and excluding it there would make the
+    # whole match fail and leak the password. The password ends unambiguously at the '@'.
+    Rule(
+        "url_userinfo",
+        Kind.SECRET_VALUE,
+        r"[a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^:@/\s]{0,256}:(?P<uri_pass>[^@\s]{1,256})@",
+        value_group="uri_pass",
+    ),
     Rule(
         "ssid",
         Kind.SSID,

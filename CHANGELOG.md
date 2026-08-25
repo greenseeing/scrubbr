@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Credentials that live in a structured shape rather than `key=value` are now caught:
+  `Authorization: Bearer <token>` and `Authorization: Basic <base64>` headers (including
+  the JSON-quoted `"Authorization": "Bearer …"` form structured logs produce), URL userinfo
+  `scheme://user:pass@host`, and DSN/URI connection strings (`postgres://`, `mysql://`,
+  `mongodb+srv://`, `redis://`, `amqp://`, …). Only the credential is rewritten — the header
+  label, scheme, host and database name stay readable. A base64 password containing `/` and
+  an `id:secret`-shaped bearer value are removed whole, not truncated.
 - A catalog of distinctive-prefix provider credentials is now scrubbed on sight: AWS access
   keys (`AKIA…`/`ASIA…`), GitHub classic and fine-grained tokens, GitLab, Slack bot/user
   tokens and webhooks, Discord webhooks, Stripe secret/restricted keys, Google API keys,
