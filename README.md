@@ -145,7 +145,7 @@ If you trust a run and want to skip the review entirely, pass `-y`.
 | `--plain` | review with the classic y/N prompt instead of the full-screen interface |
 | `-v`, `--verbose` | list every replaced value: what it was, how often it occurred, what it became |
 | `--strict` | refuse to emit anything while suspicious strings remain unscrubbed |
-| `--also TEXT` | also scrub this exact string; repeat the flag for several. IPs, long hex, UUIDs and emails keep their shape (IPs are replaced even when private or loopback); names become `[REDACTED]` |
+| `--also TEXT` | also scrub this string; repeat the flag for several. IPs, long hex, UUIDs and emails keep their shape (IPs are replaced even when private or loopback); names become a distinguishable surrogate like `redacted-a` |
 | `--no-identity` | don't seed the scanner with this machine's hostname, user and machine-id |
 | `--version` | print the installed version and exit |
 
@@ -172,9 +172,11 @@ scrubbr app.log -o app.clean.txt --also prod-db-07 --also 10.1.2.7
 Each value's type is detected from its shape. An IP address, hex of 32+ characters, a UUID
 or an email is replaced the same way scrubbr replaces ones it finds on its own — same
 shape, same alias pool — and a declared IP is replaced even if it is private or loopback,
-which incidental matches are not. A value with no recognisable shape (a name) becomes
-`[REDACTED]`; note that every such name renders identically, so two declared names cannot
-be told apart in the output.
+which incidental matches are not. A value with no recognisable shape (a name) becomes a
+numbered surrogate — `redacted-a`, `redacted-b`, … — so two declared names stay distinct
+and one name keeps the same surrogate at every occurrence (`redacted-a could not reach
+redacted-b` is still followable). Declare each spelling the log uses; the same name in
+different cases still maps to one surrogate.
 
 ## What it replaces
 
@@ -188,8 +190,8 @@ be told apart in the output.
 
 Replacements keep the original's shape: `AA-BB-CC-DD-EE-FF` stays hyphenated and uppercase,
 a v4 UUID stays a valid v4 UUID, public IPs become RFC 5737 documentation addresses. Names
-become readable aliases (`host-a`, `user-a`, `network-a`) because `host-a can't reach host-b`
-is diagnosable and two random hex blobs are not.
+become readable aliases (`host-a`, `user-a`, `network-a`, `redacted-a`) because
+`host-a can't reach host-b` is diagnosable and two random hex blobs are not.
 
 Generated MACs are always locally-administered unicast (second hex digit `2`, `6`, `a`, `e`),
 which is what macchanger, systemd-networkd and Android all produce — and which makes it
@@ -218,14 +220,18 @@ Regex scrubbing has false negatives, and the failure mode is silent. Two mitigat
 
 - Hostnames are found by asking *this* system for its own name. A log from another machine
   carries a hostname scrubbr cannot guess — pass it explicitly with `--also other-host`
-  (it will appear as `[REDACTED]`).
+  (it will appear as a `redacted-*` surrogate).
 - `--also` matches the exact spelling you give it. For IPv6 that means `--also fe80::1`
   also covers `FE80::1` but not the longhand `fe80:0:0:0:0:0:0:1` — declare each spelling
   the log uses.
 - Hex of 32+ characters is replaced with no exceptions, so checksums and 40-character git
   SHAs get scrambled too. That is deliberate: no special cases means nothing slips through.
-- Replacements are per-run. Sanitizing the same file twice gives different output; sanitize
-  once and keep the result if you need two pastes to line up.
+- Replacements are per-run, and two things reproduce them across runs — they are not the
+  same thing. A shared random *seed* reproduces the random shape replacements (a MAC, a
+  UUID, a hex blob). The readable numbered surrogates (`host-a`, `redacted-b`) are assigned
+  in order of first appearance, so a seed alone does *not* reproduce them across
+  differently-ordered runs — only a shared alias book does. Sanitize once and keep the
+  result, or share one book across both scrubs, if you need two pastes to line up.
 
 Also worth knowing: don't use `journalctl -x` for output you intend to share. The
 explanatory text it adds widens what gets exposed, and no scrubber can help with data you

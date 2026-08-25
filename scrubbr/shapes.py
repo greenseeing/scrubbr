@@ -32,6 +32,10 @@ READABLE = {
     Kind.USERNAME: "user",
     Kind.SSID: "network",
     Kind.DISK_ID: "disk",
+    # A value with no shape of its own -- a server name, a codename, a --also name --
+    # gets the same numbered counter as the named kinds so distinct values stay distinct
+    # and one value keeps one surrogate, rather than every one collapsing to a constant.
+    Kind.REDACTED: "redacted",
 }
 
 BASE64URL = string.ascii_letters + string.digits + "-_"
@@ -78,7 +82,7 @@ def normalize(kind: Kind, text: str) -> str:
             return text.lower().translate(_STRIP_SEPARATORS)
         case Kind.UUID:
             return text.lower().replace("-", "")
-        case Kind.HEX | Kind.FINGERPRINT | Kind.IPV6:
+        case Kind.HEX | Kind.FINGERPRINT | Kind.IPV6 | Kind.REDACTED:
             return text.lower()
         case _:
             return text
@@ -129,8 +133,6 @@ def mint(kind: Kind, normalized: str, rng: random.Random, index: int) -> str:
             if _is_hex(normalized):
                 return _random_hex(rng, len(normalized), normalized)
             return _random_from(rng, string.ascii_letters + string.digits, len(normalized))
-        case Kind.REDACTED:
-            return "[REDACTED]"
     raise AssertionError(f"no minter for {kind}")
 
 

@@ -99,8 +99,8 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         default=[],
         metavar="TEXT",
         help="scrub this value too; repeatable. IPs are always replaced (even private or"
-        " loopback), long hex, UUIDs and emails keep their shape; anything else becomes"
-        " [REDACTED]",
+        " loopback), long hex, UUIDs and emails keep their shape; a name becomes a numbered"
+        " surrogate like redacted-a",
     )
     return parser.parse_args(argv)
 

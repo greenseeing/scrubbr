@@ -246,29 +246,83 @@ class TestExtraLiterals:
         embedded = f"{flipped}{octets[1]}:{octets[2]}ff:fe{octets[3]}:{octets[4]}{octets[5]}"
         assert embedded in out
 
-    def test_an_extra_name_becomes_redacted(self) -> None:
-        result = scrub(
-            "connecting to prod-db-07 now", identity=LocalIdentity(extra=("prod-db-07",))
-        )
-        assert "prod-db-07" not in result.text
-        assert "[REDACTED]" in result.text
-        assert result.counts[Kind.REDACTED] == 1
-
-    def test_every_extra_name_becomes_redacted_with_no_correlation_between_them(self) -> None:
-        out = scrubbed(
-            "alice pinged prod-db-07",
-            identity=LocalIdentity(extra=("alice", "prod-db-07")),
-        )
-        assert "alice" not in out
-        assert "prod-db-07" not in out
-        assert out.count("[REDACTED]") == 2
-
     def test_an_extra_uuid_keeps_the_uuid_kind(self) -> None:
         value = "550e8400-e29b-41d4-a716-446655440000"
         result = scrub(f"session {value}", identity=LocalIdentity(extra=(value,)))
         assert value not in result.text
         assert "[REDACTED]" not in result.text
         assert {f.kind for f in result.findings} == {Kind.UUID}
+
+
+class TestRedactedSurrogates:
+    def test_a_declared_name_becomes_a_numbered_surrogate_not_the_redacted_constant(self) -> None:
+        result = scrub(
+            "connecting to prod-db-07 now", identity=LocalIdentity(extra=("prod-db-07",))
+        )
+        assert "prod-db-07" not in result.text
+        assert "[REDACTED]" not in result.text
+        assert "redacted-a" in result.text
+        assert result.counts[Kind.REDACTED] == 1
+
+    def test_two_distinct_names_get_two_distinct_surrogates(self) -> None:
+        result = scrub(
+            "alice pinged prod-db-07",
+            identity=LocalIdentity(extra=("alice", "prod-db-07")),
+        )
+        assert "alice" not in result.text
+        assert "prod-db-07" not in result.text
+        aliases = {f.alias for f in result.findings if f.kind == Kind.REDACTED}
+        assert aliases == {"redacted-a", "redacted-b"}, "two names must not collapse into one"
+        assert result.counts[Kind.REDACTED] == 2
+
+    def test_the_same_name_maps_to_one_surrogate_at_every_occurrence(self) -> None:
+        out = scrubbed(
+            "prod-db-07 up; prod-db-07 busy; prod-db-07 down",
+            identity=LocalIdentity(extra=("prod-db-07",)),
+        )
+        assert "prod-db-07" not in out
+        assert out.count("redacted-a") == 3, "one value must correlate to one surrogate"
+
+    def test_case_variants_of_a_declared_name_collapse_to_one_surrogate(self) -> None:
+        # normalize() folds case for the REDACTED key, so the two spellings of one name
+        # share a single surrogate rather than splitting into redacted-a and redacted-b.
+        out = scrubbed(
+            "ProjectX shipped; later projectx regressed",
+            identity=LocalIdentity(extra=("ProjectX", "projectx")),
+        )
+        assert "ProjectX" not in out
+        assert "projectx" not in out
+        assert out.count("redacted-a") == 2, "a casing difference must not split one name"
+
+    def test_a_surrogate_is_self_evidently_synthetic_and_never_the_original(self) -> None:
+        result = scrub(
+            "connecting to prod-db-07 now", identity=LocalIdentity(extra=("prod-db-07",))
+        )
+        alias = next(f.alias for f in result.findings if f.kind == Kind.REDACTED)
+        assert alias.startswith("redacted-")
+        assert alias != "prod-db-07"
+
+    def test_re_scrubbing_already_scrubbed_text_is_a_fixed_point(self) -> None:
+        identity = LocalIdentity(extra=("prod-db-07",))
+        first = scrub("connecting to prod-db-07 now", identity=identity)
+        second = scrub(first.text, identity=identity)
+        assert second.text == first.text, "re-running on scrubbed text must change nothing"
+        assert Kind.REDACTED not in second.counts, "a surrogate must not be re-redacted"
+        assert second.residuals == [], "a surrogate must not be re-warned"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="declaring the surrogate stem word 'redacted' self-collides "
+        "(redacted-a re-matches the literal); closed by the sentinel, issue #5",
+    )
+    def test_declaring_the_surrogate_stem_word_is_a_fixed_point(self) -> None:
+        # A surrogate is redacted-a, so a declared literal 'redacted' matches inside its own
+        # replacement and grows redacted-a-a on every pass. Only a reserved sentinel that the
+        # detector skips can make this idempotent -- that is R3/#5, not R1.
+        identity = LocalIdentity(extra=("redacted",))
+        first = scrub("the value is redacted here", identity=identity)
+        second = scrub(first.text, identity=identity)
+        assert second.text == first.text
 
 
 class TestUuid:

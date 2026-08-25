@@ -17,7 +17,7 @@ class TestAdditions:
             Decisions(additions=("prod-db-07",)),
         )
         assert "prod-db-07" not in out
-        assert out.count("[REDACTED]") == 2
+        assert out.count("redacted-a") == 2
 
     def test_an_addition_keeps_its_classified_shape(self) -> None:
         out = apply("peer 10.1.2.3 up\n", Decisions(additions=("10.1.2.3",)))
@@ -45,7 +45,7 @@ class TestAdditions:
             AliasBook(random.Random(0)),
         )
         assert result.counts[Kind.REDACTED] == 1
-        assert result.text.count("[REDACTED]") == 1
+        assert result.text.count("redacted-a") == 1
 
 
 class TestComposition:

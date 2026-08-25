@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A `--also` name — anything scrubbr redacts that has no shape of its own — now becomes a
+  distinguishable numbered surrogate (`redacted-a`, `redacted-b`, …) instead of the single
+  `[REDACTED]` constant. Two declared names stay distinct and one name keeps the same
+  surrogate at every occurrence, so `redacted-a could not reach redacted-b` stays
+  followable. The same name written in different cases maps to one surrogate.
+
+### Fixed
+
+- The docs no longer imply a shared random seed reproduces the readable numbered aliases
+  across runs. A seed reproduces the random shape replacements; the numbered surrogates are
+  assigned in order of first appearance and reproduce only across a shared alias book.
+
 ## [0.4.0] - 2026-08-04
 
 Interactive runs now end in a file next to the input instead of a terminal full of

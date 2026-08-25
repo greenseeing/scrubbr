@@ -155,7 +155,7 @@ def test_also_scrubs_a_literal_the_tool_could_not_have_guessed(
     assert main([str(path), "-y", "--no-identity", "--also", "prod-db-07"]) == 0
     out = capsys.readouterr().out
     assert "prod-db-07" not in out
-    assert "[REDACTED]" in out
+    assert "redacted-a" in out
 
 
 def test_also_with_a_private_ip_scrubs_it_while_other_private_ips_survive(
@@ -181,7 +181,7 @@ def test_verbose_reports_the_redacted_kind_for_an_also_name(
     replaced = [event for event in events if event["event"] == "replaced"]
     assert len(replaced) == 1
     assert replaced[0]["kind"] == "redacted"
-    assert replaced[0]["alias"] == "[REDACTED]"
+    assert replaced[0]["alias"] == "redacted-a"
 
 
 def test_without_a_terminal_it_refuses_rather_than_emitting_unreviewed_text(

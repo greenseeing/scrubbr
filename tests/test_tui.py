@@ -259,7 +259,7 @@ async def test_a_opens_the_finder_and_the_choice_is_scrubbed_everywhere() -> Non
     assert outcome is not None
     assert outcome.decisions.additions == ("proddb07",)
     assert "proddb07" not in outcome.result.text
-    assert outcome.result.text.count("[REDACTED]") == 2
+    assert outcome.result.text.count("redacted-a") == 2
 
 
 async def test_escape_leaves_the_finder_without_adding() -> None:
