@@ -23,6 +23,13 @@ class Kind(StrEnum):
     USERNAME = "username"
     PERSON = "person"
     PROJECT = "project"
+    # Linux-diagnostic identifiers: a stable machine fingerprint (machine-id / boot-id /
+    # invocation-id), a hardware serial (dmidecode / disk / WWN / NVMe / IQN), a cloud or
+    # kernel-netconfig identifier, and an SSH host-key fingerprint.
+    MACHINE_ID = "machine_id"
+    HARDWARE_ID = "hardware_id"
+    CLOUD_ID = "cloud_id"
+    SSH_FINGERPRINT = "ssh_fingerprint"
 
 
 class Disposition(StrEnum):

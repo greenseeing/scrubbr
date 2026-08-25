@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Linux-diagnostic identifiers scrubbr's domain is full of are now recognised as typed,
+  numbered surrogates (`machine-a`, `serial-b`, `cloud-c`, `hostkey-d`): the machine-id /
+  boot-id / invocation-id fingerprint (32 hex, no dashes — a distinct kind from the dashed
+  UUID), hardware serials (dmidecode, sysfs, udev `ID_SERIAL_SHORT`, WWN, NVMe EUI, iSCSI
+  IQN), cloud and kernel identifiers (AWS instance ids, labelled account ids, ARNs, GCP
+  `cloud-config-url`, the kernel `ip=` netconfig param), the SSH host-key `SHA256:`
+  fingerprint, and the Wi-Fi PSK in a `wpa_supplicant` debug hexdump. A placeholder serial
+  (`Not Specified`) and a hand-assigned link-local (`ip=fe80::1`) are deliberately left
+  alone; every rule is bounded against catastrophic backtracking.
 - Credentials that live in a structured shape rather than `key=value` are now caught:
   `Authorization: Bearer <token>` and `Authorization: Basic <base64>` headers (including
   the JSON-quoted `"Authorization": "Bearer …"` form structured logs produce), URL userinfo

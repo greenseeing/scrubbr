@@ -338,6 +338,109 @@ CONTEXTUAL_RULES: tuple[Rule, ...] = (
     ),
 )
 
+# Linux-diagnostic identifiers: the class scrubbr's domain is full of and used to walk past.
+# Each is distinctive (a fixed prefix or a label), so all SCRUB; the bare, ambiguous forms
+# (a bare 32-hex, a bare 16-hex WWN) are left to the HEX rule / residual net. Typed numbered
+# surrogates (machine-a, serial-b, cloud-c, hostkey-d) keep distinct ids distinguishable and,
+# because a readable counter never re-matches its own rule, make a re-scrub a fixed point.
+DIAGNOSTIC_RULES: tuple[Rule, ...] = (
+    # 32-hex-no-dash system fingerprint behind its journald/dbus label -- a distinct kind
+    # from the dashed UUID. The bare 32-hex form stays with the HEX rule.
+    Rule(
+        "system_id",
+        Kind.MACHINE_ID,
+        r"(?i:(?:machine|boot|(?:systemd[-_ ]?)?invocation)[-_ ]?id)\s*[=:]\s*"
+        r"(?P<sysid_val>[0-9a-fA-F]{32})(?![0-9a-fA-F])",
+        value_group="sysid_val",
+    ),
+    # SSH host-key fingerprint: SHA256: + 43 base64 (no padding). Prefix kept readable.
+    Rule(
+        "ssh_fingerprint",
+        Kind.SSH_FINGERPRINT,
+        r"\bSHA256:(?P<ssh_fp_val>[A-Za-z0-9+/]{43})(?![A-Za-z0-9+/=])",
+        value_group="ssh_fp_val",
+    ),
+    # Hardware serials behind a label (dmidecode / sysfs / lsblk / udev / smartctl WWN),
+    # including udev's ID_SERIAL_SHORT bare serial. The value must carry a digit and be >=4
+    # chars, so placeholders ("Not Specified", "None") are left. A leading boundary plus a
+    # BOUNDED digit lookahead (not `*`) and a value class without ':' keep matching linear --
+    # an unbounded `[...:]*[0-9]` lookahead over many `serial:` labels is O(n^2).
+    Rule(
+        "hw_serial",
+        Kind.HARDWARE_ID,
+        r"(?<![A-Za-z0-9])(?i:(?:board|product|chassis|system)?[-_ ]?"
+        r"serial(?:\s*number|_short|_id)?"
+        r"|lu\s*wwn(?:\s*device\s*id)?|wwn)\s*[=:]\s*(?:0x)?"
+        r"(?P<serial_val>(?=[A-Za-z0-9._+-]{0,64}[0-9])[A-Za-z0-9._+-]{4,64})",
+        value_group="serial_val",
+    ),
+    # NVMe EUI-64 and iSCSI IQN carry their own distinctive prefixes.
+    Rule(
+        "nvme_eui",
+        Kind.HARDWARE_ID,
+        r"\beui\.(?P<nvme_val>[0-9a-fA-F]{16,32})\b",
+        value_group="nvme_val",
+    ),
+    Rule(
+        "iscsi_iqn",
+        Kind.HARDWARE_ID,
+        r"\b(?P<iqn_val>iqn\.\d{4}-\d{2}\.[A-Za-z0-9.:-]{3,256})",
+        value_group="iqn_val",
+    ),
+    # AWS resource ids (i-/vol-/eni-/snap- + hex): keep the type prefix, scrub the id.
+    Rule(
+        "aws_resource_id",
+        Kind.CLOUD_ID,
+        r"\b(?:i|vol|eni|snap)-(?P<aws_res_val>[0-9a-f]{8,17})\b",
+        value_group="aws_res_val",
+    ),
+    # AWS account id behind a label (a bare 12-digit number is far too ambiguous to scrub).
+    Rule(
+        "aws_account_id",
+        Kind.CLOUD_ID,
+        r"(?i:account[-_]?id|owner[-_]?id)\s*[=:]\s*(?P<aws_acct_val>[0-9]{12})(?![0-9])",
+        value_group="aws_acct_val",
+    ),
+    # AWS ARN: keep arn:partition:service:region:, scrub the account:resource tail.
+    Rule(
+        "aws_arn",
+        Kind.CLOUD_ID,
+        r"\barn:(?:aws|aws-cn|aws-us-gov):[a-z0-9-]{1,32}:[a-z0-9-]{0,32}:"
+        r"(?P<arn_val>[^\s\"',]{1,512})",
+        value_group="arn_val",
+    ),
+    # cloud-config-url and the kernel netconfig ip= param both point at or fingerprint the host.
+    Rule(
+        "cloud_config_url",
+        Kind.CLOUD_ID,
+        r"(?i:cloud-config-url)\s*=\s*(?P<ccu_val>\S{1,512})",
+        value_group="ccu_val",
+    ),
+    # kernel_ip is the /proc/cmdline `ip=client:server:gw:netmask:host:dev:autoconf` param,
+    # whose fields are dotted IPv4 (or empty). The bounded dot-lookahead requires such a field
+    # so an ordinary `ip=<ipv6>` connection-log field is NOT swallowed -- that would preempt
+    # the ipv6 rule and redact a hand-assigned link-local the keep-policy deliberately keeps.
+    Rule(
+        "kernel_ip",
+        Kind.CLOUD_ID,
+        r"\bip=(?=[0-9A-Za-z:._-]{0,80}\.)"
+        r"(?P<kernel_ip_val>[0-9A-Za-z._-]{0,64}(?::[0-9A-Za-z._-]{0,64}){3,10})",
+        value_group="kernel_ip_val",
+    ),
+    # Wi-Fi PSK in the wpa_supplicant -dd debug hexdump (not a key=value shape): the ascii
+    # column holds the passphrase in cleartext. Keep the header as evidence, scrub the whole
+    # hex+ascii block. SECRET_VALUE so the replacement is a sentinel-bearing random look-alike
+    # (idempotent). The conf-file psk="..." form is already caught by the secret_kv psk stem.
+    Rule(
+        "wpa_psk",
+        Kind.SECRET_VALUE,
+        r"PSK \(ASCII passphrase\) - hexdump_ascii\(len=\d+\):"
+        r"(?P<psk_val>(?:[ \t]*\r?\n[ \t]+[0-9a-fA-F]{2}(?:[ \t]+[0-9a-fA-F]{2})*"
+        r"(?:[ \t]{2,}[^\r\n]{0,80})?){1,32})",
+        value_group="psk_val",
+    ),
+)
+
 
 def _literal_rules(
     identity: LocalIdentity, promoted: tuple[tuple[str, Kind], ...]
@@ -383,6 +486,7 @@ def _compiled(
     rules = (
         PROVIDER_RULES
         + STRUCTURAL_RULES
+        + DIAGNOSTIC_RULES
         + _literal_rules(identity, promoted)
         + CONTEXTUAL_RULES
     )

@@ -68,6 +68,13 @@ READABLE = {
     # reads as its kind instead of a generic redacted-*.
     Kind.PERSON: "person",
     Kind.PROJECT: "project",
+    # Linux-diagnostic identifiers get typed numbered surrogates too: distinct machines /
+    # serials / cloud ids stay distinguishable, and a readable counter never re-matches its
+    # own detection rule, so a re-scrub is a fixed point.
+    Kind.MACHINE_ID: "machine",
+    Kind.HARDWARE_ID: "serial",
+    Kind.CLOUD_ID: "cloud",
+    Kind.SSH_FINGERPRINT: "hostkey",
 }
 
 ALNUM = string.ascii_letters + string.digits
@@ -123,6 +130,10 @@ def normalize(kind: Kind, text: str) -> str:
             | Kind.HOSTNAME
             | Kind.PERSON
             | Kind.PROJECT
+            | Kind.MACHINE_ID
+            | Kind.HARDWARE_ID
+            | Kind.CLOUD_ID
+            | Kind.SSH_FINGERPRINT
         ):
             return text.lower()
         case _:
