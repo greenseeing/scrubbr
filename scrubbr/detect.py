@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -12,6 +13,7 @@ from scrubbr.shapes import (
     classify_literal,
     shannon_entropy,
 )
+from scrubbr.validate import valid_github_token, valid_jwt
 
 # An RSA-8192 key is around 12 KB of base64, so this fits any real key while keeping an
 # unterminated BEGIN marker from backtracking across the whole file.
@@ -87,6 +89,11 @@ class Rule:
     # A gated rule only scrubs a captured value that clears the length+entropy gate; below
     # it the value is left in place (not warned) -- it is ordinary, not a secret.
     gated: bool = False
+    # An offline validator (checksum / structural parse). When it fails, the match is
+    # DOWNGRADED SCRUB -> WARN -- surfaced, never suppressed -- so a truncated or malformed
+    # token in a log is still flagged rather than silently passed.
+    validator: Callable[[str], bool] | None = None
+    downgrade_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -111,8 +118,15 @@ class Match:
 # not the raw survey regexes. Every quantifier is bounded, so no entry can backtrack
 # catastrophically on a large adversarial dump.
 PROVIDER_RULES: tuple[Rule, ...] = (
-    # -- GitHub: 36 base62 (classic) / 82 (fine-grained) after the prefix --
-    Rule("github_token", Kind.SECRET_VALUE, r"\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36}\b"),
+    # -- GitHub: 36 base62 (classic) / 82 (fine-grained) after the prefix. The classic token
+    #    carries a trailing CRC32; a failing one downgrades to WARN (never dropped). --
+    Rule(
+        "github_token",
+        Kind.SECRET_VALUE,
+        r"\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{36}\b",
+        validator=valid_github_token,
+        downgrade_reason="github token failed its checksum (truncated or mistyped; still flagged)",
+    ),
     Rule("github_pat", Kind.SECRET_VALUE, r"\bgithub_pat_[0-9A-Za-z_]{82}\b"),
     # -- GitLab PAT. A trailing (?!...) fence rather than \b: '-' is in the charset but not
     #    a word char, so \b would FAIL (leaking the token) when the token ends in '-'. --
@@ -215,7 +229,13 @@ STRUCTURAL_RULES: tuple[Rule, ...] = (
         Kind.CRYPT_HASH,
         r"\$(?:1|5|6|2[aby]|apr1)\$(?:rounds=\d+\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{20,90}",
     ),
-    Rule("jwt", Kind.JWT, r"eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]*"),
+    Rule(
+        "jwt",
+        Kind.JWT,
+        r"eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]*",
+        validator=valid_jwt,
+        downgrade_reason="malformed jwt (does not parse; still flagged)",
+    ),
     Rule("disk_id", Kind.DISK_ID, r"/dev/disk/by-id/(?P<disk_id_val>[A-Za-z0-9._:+-]+)",
          value_group="disk_id_val"),
     # 8+ colon-hex groups: a digest fingerprint, never a MAC.
@@ -528,6 +548,15 @@ def detect(
             # dropping it here would let the keyword rule swallow the span and preempt the
             # HEX/UUID rule that would otherwise catch it.
             continue
+        disposition = rule.disposition
+        reason = rule.warn_reason
+        if rule.validator is not None and not rule.validator(text[start:end]):
+            # Failed an offline checksum/format check: downgrade SCRUB -> WARN so it is
+            # still surfaced. Validation can only ever downgrade, never suppress. Validate the
+            # recorded value span (text[start:end]), the same text that would be scrubbed, so a
+            # future validator on a value_group rule checks the value, not its label wrapper.
+            disposition = Disposition.WARN
+            reason = rule.downgrade_reason
         matches.append(
             Match(
                 kind=rule.kind,
@@ -535,8 +564,8 @@ def detect(
                 end=end,
                 text=text[start:end],
                 forced=rule.forced,
-                disposition=rule.disposition,
-                reason=rule.warn_reason,
+                disposition=disposition,
+                reason=reason,
             )
         )
     return matches

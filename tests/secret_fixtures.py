@@ -12,9 +12,36 @@ false-positive on these fakes. The assembled runtime values are exactly the toke
 the rules are written to catch.
 """
 
-# ghp_ + 36 base62 (40 chars total). SCRUB tier: distinctive prefix + fixed length.
-GITHUB_PAT = "ghp" + "_A1B2C3D4E5F6G7H8J9K0L1M2N3P4Q5R6S7T8"
-GITHUB_OAUTH = "gho" + "_Z9Y8X7W6V5U4T3S2R1Q0P9N8M7L6K5J4H3G2"
+import base64 as _base64
+import json as _json
+
+from scrubbr.validate import github_checksum
+
+# ghp_ + 30 base62 random + 6 base62 CRC32 checksum (40 chars total). Built with a VALID
+# checksum so it stays SCRUB tier; a copy with a corrupted checksum downgrades to WARN.
+_GHP_BODY = "A1B2C3D4E5F6G7H8J9K0L1M2N3P4Q5"  # 30 base62
+_GHO_BODY = "Z9Y8X7W6V5U4T3S2R1Q0P9N8M7L6K5"  # 30 base62
+GITHUB_PAT = "ghp" + "_" + _GHP_BODY + github_checksum(_GHP_BODY)
+GITHUB_OAUTH = "gho" + "_" + _GHO_BODY + github_checksum(_GHO_BODY)
+# Same shape, one checksum character corrupted: a truncated/mistyped token.
+GITHUB_PAT_BADSUM = GITHUB_PAT[:-1] + ("A" if GITHUB_PAT[-1] != "A" else "B")
+
+
+def _jwt_segment(payload: dict) -> str:
+    raw = _json.dumps(payload, separators=(",", ":")).encode()
+    return _base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+# A structurally valid JWT: header.payload are base64url-encoded JSON objects.
+JWT_VALID = ".".join(
+    [
+        _jwt_segment({"alg": "HS256", "typ": "JWT"}),
+        _jwt_segment({"sub": "1234567890", "name": "scrubbr test"}),
+        "c2lnbmF0dXJlX3BhcnQ",
+    ]
+)
+# Matches the JWT shape but the payload is not base64url JSON -- log noise, not a live token.
+JWT_MALFORMED = "eyJhbGciOiJIUzI1NiJ9" + "." + "this_is_not_valid_json_payload" + "." + "c2ln"
 
 # SK + 32 hex. WARN tier: 32-hex collides with MD5/IDs, too collision-prone to scrub.
 TWILIO_SK = "SK" + "0123456789abcdef" * 2

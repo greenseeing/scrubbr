@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Offline checksum/format validation now downgrades (never suppresses) a match it can't
+  confirm. A GitHub classic token whose trailing CRC32 fails, and a JWT whose three segments
+  don't parse as base64url JSON, drop from scrub to a warn row — surfaced with a line number
+  and still gating `--strict` — rather than being scrubbed as a confirmed secret or, worse,
+  silently passed. A keyword or `Authorization` context still outranks the checksum and
+  scrubs outright, and a value declared with `--also` or kept in review always wins. (The
+  GitHub CRC uses GitHub's published crc32+base62 scheme; its exact low-level variant is
+  undocumented, so the check is deliberately downgrade-only and fail-safe.)
 - Linux-diagnostic identifiers scrubbr's domain is full of are now recognised as typed,
   numbered surrogates (`machine-a`, `serial-b`, `cloud-c`, `hostkey-d`): the machine-id /
   boot-id / invocation-id fingerprint (32 hex, no dashes — a distinct kind from the dashed
