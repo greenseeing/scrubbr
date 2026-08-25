@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Sequence
 
 from scrubbr.kinds import Residual
+from scrubbr.shapes import SENTINEL
 
 MIN_TOKEN_CHARS = 20
 MIN_ENTROPY_BITS = 3.5
@@ -41,9 +42,9 @@ def shannon_entropy(value: str) -> float:
 def find_residuals(
     text: str,
     written: Sequence[tuple[int, int]] = (),
-    unresolved: Sequence[str] = (),
+    warnings: Sequence[tuple[str, str]] = (),
 ) -> list[Residual]:
-    """Tokens that look sensitive but matched no rule.
+    """Tokens that look sensitive but matched no SCRUB rule.
 
     Reported, never rewritten. A scrubber that silently guesses is worse than one that
     says plainly where it is unsure.
@@ -51,28 +52,39 @@ def find_residuals(
     `written` are the spans this tool just produced. Excluding them matters more than it
     looks: aliases are by construction high-entropy, so without this the tool warns about
     its own output on every single run and the warning stops meaning anything.
+
+    `warnings` are (value, reason) pairs the sweep flagged but left in place -- a WARN-tier
+    provider match or colon-hex the detector recognised the shape of but could not
+    interpret -- each surfaced at every line where the value still appears.
     """
     spans = sorted(written)
     ends = [end for _, end in spans]
     line_starts = _line_starts(text)
 
+    # First seen reason wins for a repeated flagged value.
+    reasons: dict[str, str] = {}
+    for value, reason in warnings:
+        reasons.setdefault(value, reason)
+
     residuals: list[Residual] = []
     for token in TOKEN.finditer(text):
-        if _overlaps(token.span(), spans, ends):
+        if _overlaps(token.span(), spans, ends) or token.group() in reasons:
+            # A value the sweep already flagged carries a specific reason; the generic
+            # entropy net must not report it a second time.
             continue
-        reason = _suspicion(token.group())
-        if reason is not None:
+        suspicion = _suspicion(token.group())
+        if suspicion is not None:
             line = bisect_right(line_starts, token.start())
-            residuals.append(Residual(line=line, text=token.group(), reason=reason))
+            residuals.append(Residual(line=line, text=token.group(), reason=suspicion))
 
-    # Colon- and dot-structured values are invisible to TOKEN, so anything the detector
-    # recognised the shape of but could not interpret is reported by literal search.
-    for value in dict.fromkeys(unresolved):
+    # Colon- and dot-structured values are invisible to TOKEN, so anything the sweep flagged
+    # for review is reported by literal search.
+    for value, reason in reasons.items():
         for found in re.finditer(re.escape(value), text):
             if _overlaps(found.span(), spans, ends):
                 continue
             line = bisect_right(line_starts, found.start())
-            residuals.append(Residual(line=line, text=value, reason="unrecognized structure"))
+            residuals.append(Residual(line=line, text=value, reason=reason))
     residuals.sort(key=lambda r: (r.line, r.text))
     return residuals
 
@@ -94,6 +106,10 @@ def _overlaps(span: tuple[int, int], spans: list[tuple[int, int]], ends: list[in
 
 
 def _suspicion(token: str) -> str | None:
+    if SENTINEL in token:
+        # scrubbr's own synthetic surrogate, not a leak; keeps a re-scrub from warning
+        # about the random string it just minted for a secret.
+        return None
     if token.startswith(CREDENTIAL_PREFIXES):
         return "known credential prefix"
     if "/" in token or token.count(".") > 1:

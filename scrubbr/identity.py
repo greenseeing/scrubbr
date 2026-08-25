@@ -3,6 +3,8 @@ import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scrubbr.kinds import Kind
+
 SYSTEM_USERNAMES = frozenset(
     {
         "root",
@@ -38,6 +40,10 @@ class LocalIdentity:
     hostname: str | None = None
     username: str | None = None
     extra: tuple[str, ...] = field(default_factory=tuple)
+    # Declared values whose surrogate kind the caller has named (--also-host / -person /
+    # -project): forced past the keep-allowlists like `extra`, but typed rather than
+    # shape-classified so the surrogate reads as host-a / person-b / project-c.
+    roles: tuple[tuple[str, Kind], ...] = field(default_factory=tuple)
 
     @classmethod
     def local(cls) -> "LocalIdentity":

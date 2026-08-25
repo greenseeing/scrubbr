@@ -7,7 +7,11 @@ from scrubbr.kinds import Kind
 
 HEX_MIN_CHARS = 32
 
-EMAIL_PATTERN = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+# Length bounds are load-bearing, not cosmetic: an unbounded local part rescans the whole
+# remaining run at every start position looking for an `@`, which is O(n^2) across a large
+# dump (a ReDoS wedge). RFC 5321 caps the local part at 64 octets and a label at 63, so the
+# bounds keep the per-position scan constant while still matching every real address.
+EMAIL_PATTERN = r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,63}"
 UUID_PATTERN = (
     r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
 )
@@ -24,6 +28,18 @@ IPV4_POOLS = ("203.0.113.", "198.51.100.", "192.0.2.")
 IPV6_PREFIX = "2001:db8::"
 DOCUMENTATION_V4 = tuple(ipaddress.ip_network(f"{pool}0/24") for pool in IPV4_POOLS)
 DOCUMENTATION_V6 = ipaddress.ip_network(f"{IPV6_PREFIX}/32")
+# RFC 5737 gives exactly three /24s, 254 usable hosts each. Past this the alias pool
+# has no distinct documentation address left to mint, so scrub warns rather than
+# silently wrapping two distinct inputs onto one alias.
+IPV4_POOL_SIZE = len(IPV4_POOLS) * 254
+
+# A reserved marker woven into minted secret surrogates (and recognised in the readable
+# counters and documentation ranges) so every surrogate is provably scrubbr's own output:
+# the detector and the residual net skip it, which is what makes a second scrub pass a
+# fixed point. Kept ASCII and readable so an LLM tokenises it cleanly and a human reading
+# the log sees at a glance that the value is synthetic; the digit bracketing keeps it from
+# colliding with a real credential body.
+SENTINEL = "0scrubbr0"
 
 RESERVED_MAC_PREFIXES = ("ffff", "01005e", "3333", "0180c2", "00005e", "01000c")
 
@@ -36,10 +52,15 @@ READABLE = {
     # gets the same numbered counter as the named kinds so distinct values stay distinct
     # and one value keeps one surrogate, rather than every one collapsing to a constant.
     Kind.REDACTED: "redacted",
+    # Role hints (--also-person / --also-project) type a declared name so its surrogate
+    # reads as its kind instead of a generic redacted-*.
+    Kind.PERSON: "person",
+    Kind.PROJECT: "project",
 }
 
-BASE64URL = string.ascii_letters + string.digits + "-_"
-CRYPT_ALPHABET = "./" + string.ascii_letters + string.digits
+ALNUM = string.ascii_letters + string.digits
+BASE64URL = ALNUM + "-_"
+CRYPT_ALPHABET = "./" + ALNUM
 
 _STRIP_SEPARATORS = str.maketrans("", "", ":-.")
 
@@ -82,7 +103,15 @@ def normalize(kind: Kind, text: str) -> str:
             return text.lower().translate(_STRIP_SEPARATORS)
         case Kind.UUID:
             return text.lower().replace("-", "")
-        case Kind.HEX | Kind.FINGERPRINT | Kind.IPV6 | Kind.REDACTED:
+        case (
+            Kind.HEX
+            | Kind.FINGERPRINT
+            | Kind.IPV6
+            | Kind.REDACTED
+            | Kind.HOSTNAME
+            | Kind.PERSON
+            | Kind.PROJECT
+        ):
             return text.lower()
         case _:
             return text
@@ -132,8 +161,35 @@ def mint(kind: Kind, normalized: str, rng: random.Random, index: int) -> str:
         case Kind.SECRET_VALUE:
             if _is_hex(normalized):
                 return _random_hex(rng, len(normalized), normalized)
-            return _random_from(rng, string.ascii_letters + string.digits, len(normalized))
+            return _synthetic_secret(rng, len(normalized))
     raise AssertionError(f"no minter for {kind}")
+
+
+def is_synthetic(text: str) -> bool:
+    """True when a value carries one of scrubbr's own self-advertising markers.
+
+    A secret surrogate carries the sentinel and an email surrogate sits in the reserved
+    example.invalid domain, so the sweep can keep such a value verbatim on a re-scrub -- a
+    random SECRET_VALUE look-alike behind a keyword, or a minted email -- rather than
+    minting a fresh alias and never reaching a fixed point.
+
+    Deliberately narrow: it must never mask a real value. Readable counter labels (host-a)
+    are handled instead by the surrogate-label skip in the sweep, which stays clear of a
+    value the caller explicitly declared, and documentation-range IPs are kept by their own
+    allowlists. A caller who declares such a value with --also still gets it scrubbed.
+    """
+    return SENTINEL in text or text.endswith("@example.invalid")
+
+
+def _synthetic_secret(rng: random.Random, length: int) -> str:
+    token = _random_from(rng, ALNUM, length)
+    # Overlay the sentinel where the token has room for it. A token too short to carry it is
+    # also too short (< 9 chars) to reach the residual scanner's 20-char length gate, so it
+    # never needs one. Length is preserved so the replacement stays a shape-preserving
+    # look-alike.
+    if length < len(SENTINEL):
+        return token
+    return SENTINEL + token[len(SENTINEL) :]
 
 
 def render(kind: Kind, canonical: str, like: str) -> str:

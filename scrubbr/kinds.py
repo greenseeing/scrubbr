@@ -21,6 +21,22 @@ class Kind(StrEnum):
     SSID = "ssid"
     HOSTNAME = "hostname"
     USERNAME = "username"
+    PERSON = "person"
+    PROJECT = "project"
+
+
+class Disposition(StrEnum):
+    """What a rule does with a match.
+
+    SCRUB rewrites the value; WARN leaves it in place but surfaces it as a review
+    warning with a line number; REPORT_ONLY is the low-confidence residual entropy net.
+    The gate for SCRUB is distinctiveness -- a fixed prefix plus a validated
+    length/charset -- so a collision-prone shape is downgraded to WARN, never suppressed.
+    """
+
+    SCRUB = "scrub"
+    WARN = "warn"
+    REPORT_ONLY = "report_only"
 
 
 class Finding(BaseModel):
@@ -31,6 +47,7 @@ class Finding(BaseModel):
     end: int
     text: str
     alias: str
+    disposition: Disposition = Disposition.SCRUB
 
 
 class Residual(BaseModel):
