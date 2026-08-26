@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A caller-declared value that *wraps* an identifier no longer scrubs one occurrence and
+  leaves the rest exposed. Declaring `--name=1b22a1569a211d72.pem` (or picking it in the
+  review, which used to offer the glued `--flag=<id>.ext` token whole) scrubbed only that
+  exact span, leaving every bare copy of the embedded key id `1b22a1569a211d72` in the
+  clear — and silently, since a 16-char id sits below both the auto-detect (`≥32` hex) and
+  the report-only entropy net (`≥20` chars), so nothing warned and `--strict` still passed.
+  The id is now pulled out of the declared value and scrubbed everywhere it appears. The
+  extraction is additive — the wrapper match still stands, so a monolithic secret that
+  merely contains a hex run is still removed whole, never fractured — and reaches through
+  every declaration flag (`--also`, `--also-host`, `--also-person`, `--also-project`), not
+  just `--also`. The promoted id folds case, so a copy logged `1B22…` by another tool is
+  caught too, and a pure-decimal run (a timestamp, an order id) is deliberately left as
+  correlation data rather than scrubbed. The review picker now offers the embedded id
+  itself instead of the surrounding path/flag token.
+
 ## [0.5.0] - 2026-08-26
 
 Detection reaches much further into a real diagnostic dump: provider credentials,

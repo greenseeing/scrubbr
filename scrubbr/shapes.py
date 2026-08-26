@@ -9,6 +9,13 @@ from scrubbr.kinds import Kind
 
 HEX_MIN_CHARS = 32
 
+# The shortest embedded run worth pulling out of a declared wrapper value. A 12-hex id is a
+# 48-bit fingerprint -- distinctive enough that a value the caller declared sensitive almost
+# never wraps one incidentally, so scrubbing it everywhere is safe. A mixed letter+digit run
+# needs more length (16) before it reads as an id rather than a word with a stray digit.
+EMBEDDED_ID_MIN_HEX = 12
+EMBEDDED_ID_MIN_MIXED = 16
+
 
 def shannon_entropy(value: str) -> float:
     """Bits of entropy per character -- the shared measure the keyword gate and the
@@ -93,6 +100,40 @@ def classify(text: str) -> Kind | None:
     if _EMAIL.fullmatch(text):
         return Kind.EMAIL
     return None
+
+
+def embedded_ids(text: str) -> tuple[str, ...]:
+    """Identifier-shaped runs hiding inside a compound declared value.
+
+    When the caller declares `--name=1b22a1569a211d72.pem` as a value to scrub, the key id
+    it wraps also appears bare elsewhere; the wrapper scrubs only its own occurrence, so the
+    id is pulled out here to be scrubbed everywhere else too. Without this, "one value, one
+    replacement" silently misses every bare copy -- a partial scrub that reads as a clean
+    one. A run equal to the whole value is skipped: that occurrence is the declared literal
+    itself, already handled. Extraction is additive to the wrapper match -- it only ever
+    scrubs more -- so a monolithic secret that merely contains a hex run is still removed
+    whole rather than fractured.
+    """
+    found = [
+        run.group()
+        for run in re.finditer(r"[A-Za-z0-9]+", text)
+        if run.group() != text and _is_embedded_id(run.group())
+    ]
+    return tuple(dict.fromkeys(found))
+
+
+def _is_embedded_id(value: str) -> bool:
+    # A hex run must carry an actual a-f digit: a pure-decimal run (a 15-digit timestamp, an
+    # order or invoice number) is hex by alphabet but is ordinary correlation data, not a
+    # fingerprint, and scrubbing every bare copy of it would wreck the log it exists to
+    # preserve. The a-f requirement is also what makes it "hex-shaped" rather than a number.
+    if _is_hex(value) and any(char in "abcdefABCDEF" for char in value):
+        return len(value) >= EMBEDDED_ID_MIN_HEX
+    return (
+        len(value) >= EMBEDDED_ID_MIN_MIXED
+        and any(char.isdigit() for char in value)
+        and any(char.isalpha() for char in value)
+    )
 
 
 def classify_literal(text: str) -> Kind:

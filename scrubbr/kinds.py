@@ -55,6 +55,10 @@ class Finding(BaseModel):
     text: str
     alias: str
     disposition: Disposition = Disposition.SCRUB
+    # True when the value was declared by the caller (--also / --also-host / -person /
+    # -project), not shape-detected. A declared value states "this whole thing is sensitive",
+    # which is the licence to pull any id it wraps out and scrub that everywhere too.
+    forced: bool = False
 
 
 class Residual(BaseModel):

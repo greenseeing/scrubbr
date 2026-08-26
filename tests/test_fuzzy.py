@@ -29,6 +29,24 @@ def test_candidates_trim_surrounding_punctuation() -> None:
     assert "done" in pool
 
 
+def test_a_compound_token_offers_its_embedded_id_not_the_glued_whole() -> None:
+    pool = candidates("seal: --name=1b22a1569a211d72.pem now", [])
+    assert "1b22a1569a211d72" in pool, "the embedded key id must be a first-class candidate"
+    assert "--name=1b22a1569a211d72.pem" not in pool, "the glued token silently under-scrubs"
+
+
+def test_a_path_offers_its_segments_including_an_embedded_id() -> None:
+    pool = candidates("/var/lib/keys/1b22a1569a211d72.pem", [])
+    assert "1b22a1569a211d72" in pool
+    assert "/var/lib/keys/1b22a1569a211d72.pem" not in pool
+
+
+def test_a_snake_or_kebab_identifier_stays_whole() -> None:
+    pool = candidates("export DB_PASSWORD_TOKEN=x and prod-db-07", [])
+    assert "DB_PASSWORD_TOKEN" in pool, "an internal '_' must not split the identifier"
+    assert "prod-db-07" in pool, "an internal '-' must not split the identifier"
+
+
 def test_every_token_in_a_large_file_is_a_candidate() -> None:
     filler = " ".join(f"tok{i:05d}" for i in range(6000))
     pool = candidates(f"{filler}\nsd 0:0:0:0: [sda] Serial: 80EE1D3JS\n", [])

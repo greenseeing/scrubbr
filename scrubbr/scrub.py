@@ -15,6 +15,7 @@ from scrubbr.shapes import (
     DOCUMENTATION_V6,
     IPV4_POOL_SIZE,
     classify,
+    embedded_ids,
     embedded_mac,
     is_reserved_mac,
     is_synthetic,
@@ -56,13 +57,7 @@ def scrub(
         book = AliasBook()
     findings, replacements, warnings = _sweep(text, identity, (), book, keep, overrides)
 
-    # A value found behind a keyword has to be scrubbed everywhere else it appears too,
-    # or `psk=hunter2` is rewritten while the bare `hunter2` two lines down survives.
-    # Deriving this from the kept-filtered findings is what makes keeping a labelled
-    # secret also un-promote its bare occurrences.
-    promoted = tuple(
-        {(f.text, f.kind) for f in findings if f.kind in {Kind.SECRET_VALUE, Kind.SSID}}
-    )
+    promoted = _promotions(findings)
     if promoted:
         findings, replacements, warnings = _sweep(
             text, identity, promoted, book, keep, overrides
@@ -78,6 +73,40 @@ def scrub(
         residuals=residuals,
         counts=dict(counts),
     )
+
+
+def _promotions(findings: list[Finding]) -> tuple[tuple[str, Kind], ...]:
+    """Values a first pass confirmed that a second pass must catch wherever they appear.
+
+    A secret found behind a keyword (`psk=hunter2`) has to be scrubbed at its bare
+    occurrences too, or the labelled copy is rewritten while the bare one two lines down
+    survives. A value the CALLER declared (--also / --also-host / -person / -project) that
+    WRAPS an id (`--name=<kid>.pem`) is the same problem one level down: the wrapper scrubs
+    its own occurrence, so the id it carries is pulled out and scrubbed everywhere else as
+    well. Both are additive -- the first-pass matches still stand, this only ever scrubs
+    more -- and deriving them from the kept-filtered findings is what makes keeping a value
+    also un-promote its bare occurrences.
+
+    Extraction is keyed on `forced` (caller-declared), not on a kind: the same wrapper leak
+    reaches through every declaration flag, and `--also-project 'proj-<kid>-prod'` classifies
+    HOSTNAME/PERSON/PROJECT rather than REDACTED. It is deliberately NOT applied to
+    shape-detected findings -- an opaque provider token that happens to contain a hex run
+    carries no caller assertion that the run is a reusable id, so scrubbing every bare copy of
+    it would destroy correlation data the tool exists to preserve.
+
+    The wrapper and the id it carries are distinct values, so they mint distinct surrogates
+    (`redacted-a` for `--name=<kid>.pem`, `redacted-b` for the bare id). That costs a little
+    correlation in the output; sharing one alias would mean aliasing the wrapper by its
+    embedded id, which no longer holds for a wrapper carrying two. Nothing leaks either way,
+    and the review picker now offers the bare id directly, so the common path is one alias.
+    """
+    promoted: set[tuple[str, Kind]] = set()
+    for finding in findings:
+        if finding.kind in {Kind.SECRET_VALUE, Kind.SSID}:
+            promoted.add((finding.text, finding.kind))
+        elif finding.forced:
+            promoted.update((core, Kind.REDACTED) for core in embedded_ids(finding.text))
+    return tuple(promoted)
 
 
 def _pool_overflow(book: AliasBook) -> list[Residual]:
@@ -162,6 +191,7 @@ def _sweep(
                 text=match.text,
                 alias=replacement,
                 disposition=Disposition.SCRUB,
+                forced=match.forced,
             )
         )
         replacements.append((match.start, match.end, replacement))

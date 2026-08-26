@@ -320,6 +320,83 @@ class TestRedactedSurrogates:
         assert second.text == first.text
 
 
+class TestDeclaredValueWrappingAnId:
+    # A key-mint diagnostic: the id appears bare and inside a `--name=<id>.pem` flag, a path,
+    # and a `.cred` path. The review picker used to offer the whole `--name=<id>.pem` span as
+    # one atomic token; declaring that scrubbed the one occurrence and left the id exposed at
+    # every other site -- a silent partial leak.
+    KEYGEN = (
+        "minted 1b22a1569a211d72\n"
+        "  private: /var/lib/saltlab/keys/1b22a1569a211d72.pem "
+        "(seal: systemd-creds encrypt --name=1b22a1569a211d72.pem "
+        "/var/lib/saltlab/keys/1b22a1569a211d72.pem "
+        "/etc/saltlab/creds/1b22a1569a211d72.pem.cred)\n"
+        "  public:  /var/lib/saltlab/keys/1b22a1569a211d72.spki.der\n"
+    )
+
+    def test_declaring_the_wrapper_scrubs_every_bare_copy_of_the_embedded_id(self) -> None:
+        out = scrubbed(
+            self.KEYGEN, identity=LocalIdentity(extra=("--name=1b22a1569a211d72.pem",))
+        )
+        assert "1b22a1569a211d72" not in out, "the embedded key id leaked in the clear"
+
+    def test_promotion_is_additive_so_the_wrapper_itself_still_scrubs(self) -> None:
+        # The wrapper span is a distinct declared value; pulling the id out only ever scrubs
+        # MORE, so both the wrapper and the bare id are removed.
+        result = scrub(
+            self.KEYGEN, identity=LocalIdentity(extra=("--name=1b22a1569a211d72.pem",))
+        )
+        assert "1b22a1569a211d72" not in result.text
+        assert result.counts[Kind.REDACTED] == 2
+
+    def test_a_monolithic_declared_secret_is_never_fractured(self) -> None:
+        # A declared value that IS the secret, embedded hex notwithstanding, is still removed
+        # whole -- the net must not decompose it and leave the flanking fragments in place.
+        out = scrubbed(
+            "token Xy9-1b22a1569a211d72-Zq here; again Xy9-1b22a1569a211d72-Zq",
+            identity=LocalIdentity(extra=("Xy9-1b22a1569a211d72-Zq",)),
+        )
+        assert "Xy9" not in out and "Zq" not in out
+        assert "1b22a1569a211d72" not in out
+
+    def test_an_ordinary_declared_name_promotes_nothing(self) -> None:
+        # prod-db-07 wraps no id-shaped run, so it must not spawn extra surrogates.
+        result = scrub(
+            "prod-db-07 talks to prod-db-07", identity=LocalIdentity(extra=("prod-db-07",))
+        )
+        assert result.counts[Kind.REDACTED] == 1
+
+    def test_a_role_hinted_wrapper_also_scrubs_the_embedded_id(self) -> None:
+        # The leak reaches through every declaration flag, not just --also: --also-project /
+        # --also-host classify PROJECT/HOSTNAME, so promotion keys on caller-declared origin.
+        for value, kind in (("proj-1b22a1569a211d72-prod", Kind.PROJECT),
+                            ("build-1b22a1569a211d72.internal", Kind.HOSTNAME)):
+            out = scrubbed(
+                f"on {value} the key id: 1b22a1569a211d72 was minted",
+                identity=LocalIdentity(roles=((value, kind),)),
+            )
+            assert "1b22a1569a211d72" not in out, f"{kind} wrapper leaked the embedded id"
+
+    def test_a_differently_cased_bare_copy_of_the_id_is_also_scrubbed(self) -> None:
+        # One tool logs the key id lowercase, another uppercase; the hex id is below every
+        # shape/entropy net, so the promoted literal is the only thing catching it -- it must
+        # fold case or the differently-cased copy leaks.
+        out = scrubbed(
+            "seal: --name=1b22a1569a211d72.pem\nelsewhere: 1B22A1569A211D72\n",
+            identity=LocalIdentity(extra=("--name=1b22a1569a211d72.pem",)),
+        )
+        assert "1B22A1569A211D72" not in out, "the uppercase copy of the id leaked"
+
+    def test_a_pure_decimal_run_in_a_declared_value_is_not_scrubbed_elsewhere(self) -> None:
+        # A 15-digit timestamp is hex by alphabet but is ordinary correlation data, not a
+        # fingerprint; declaring a path that contains one must not redact every bare copy.
+        out = scrubbed(
+            "wrote report_202608261200000.csv\ncorrelation id 202608261200000 seen twice",
+            identity=LocalIdentity(extra=("report_202608261200000.csv",)),
+        )
+        assert out.count("202608261200000") == 1, "a decimal correlation id must be preserved"
+
+
 class TestUuid:
     def test_version_and_variant_are_preserved(self) -> None:
         out = scrubbed("id 550e8400-e29b-41d4-a716-446655440000")

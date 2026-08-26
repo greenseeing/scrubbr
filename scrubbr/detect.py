@@ -480,7 +480,13 @@ def _literal_rules(
     literals.extend((value, kind, True, True) for value, kind in identity.roles)
     if identity.username:
         literals.append((identity.username, Kind.USERNAME, False, False))
-    literals.extend((value, kind, False, False) for value, kind in promoted)
+    # A promoted embedded id (the only REDACTED entry promotion produces) is a hex/id run
+    # pulled from a declared wrapper. It folds case: the same key id is logged 1b22.. by one
+    # tool and 1B22.. by another, and the case-folding REDACTED key then maps both spellings
+    # to one surrogate rather than leaving the differently-cased copy in the clear.
+    literals.extend(
+        (value, kind, False, kind is Kind.REDACTED) for value, kind in promoted
+    )
     # Longest first: a username is frequently a substring of the hostname ("dev" inside
     # "dev-thinkpad"), and the longer match has to win at that position.
     literals.sort(key=lambda entry: len(entry[0]), reverse=True)
