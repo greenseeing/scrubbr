@@ -27,7 +27,7 @@ GITHUB_OAUTH = "gho" + "_" + _GHO_BODY + github_checksum(_GHO_BODY)
 GITHUB_PAT_BADSUM = GITHUB_PAT[:-1] + ("A" if GITHUB_PAT[-1] != "A" else "B")
 
 
-def _jwt_segment(payload: dict) -> str:
+def _jwt_segment(payload: dict[str, str]) -> str:
     raw = _json.dumps(payload, separators=(",", ":")).encode()
     return _base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
