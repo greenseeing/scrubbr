@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-26
+
 ### Fixed
 
 - A caller-declared value that *wraps* an identifier no longer scrubs one occurrence and
