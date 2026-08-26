@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-26
+
+Detection reaches much further into a real diagnostic dump: provider credentials,
+`Authorization`/DSN shapes, and Linux-diagnostic identifiers (machine-id, serials, cloud
+and SSH/Wi-Fi ids) are now recognised, the keyword net is case- and separator-insensitive,
+the report-only entropy net is sharpened per charset, and an offline checksum/format check
+downgrades a match it can't confirm rather than dropping it.
+
 ### Added
 
 - Offline checksum/format validation now downgrades (never suppresses) a match it can't
@@ -182,7 +190,8 @@ while missing most of the options below, so that version number was retired rath
 - Width-aware tables for the stderr report when running on a terminal, JSON log lines otherwise.
 - Fallback to a stdio-backed terminal when `/dev/tty` cannot be opened.
 
-[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/greenseeing/scrubbr/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/greenseeing/scrubbr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/greenseeing/scrubbr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/greenseeing/scrubbr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/greenseeing/scrubbr/releases/tag/v0.2.0
